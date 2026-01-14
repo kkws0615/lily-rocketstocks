@@ -5,9 +5,9 @@ import yfinance as yf
 import numpy as np
 import random
 
-st.set_page_config(page_title="台股AI標股神探 (產業趨勢版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (修正優化版)", layout="wide")
 
-# --- 0. 初始化與資料庫 ---
+# --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
     st.session_state.watch_list = {
         "2330.TW": "台積電", "2454.TW": "聯發科", "2317.TW": "鴻海", "2603.TW": "長榮",
@@ -20,44 +20,29 @@ if 'watch_list' not in st.session_state:
         "2002.TW": "中鋼",   "2891.TW": "中信金"
     }
 
-# === 新增：產業分類對照表 ===
+# 新增：紀錄最後加入的股票代號，用來強制置頂
+if 'last_added' not in st.session_state:
+    st.session_state.last_added = ""
+
+# 產業資料庫
 ticker_sector_map = {
-    "2330": "Semi", "2454": "Semi", "2303": "Semi", "3034": "Semi", "2379": "Semi", # 半導體
-    "2317": "AI_Hw", "3231": "AI_Hw", "2382": "AI_Hw", "6669": "AI_Hw", "2357": "AI_Hw", # AI硬體/組裝
-    "2603": "Ship", "2609": "Ship", # 航運
-    "2881": "Fin", "2882": "Fin", "5871": "Fin", "2891": "Fin", # 金融
-    "3008": "Optic", # 光學
-    "1605": "Wire", "1513": "Power", "2308": "Power", # 重電線纜
-    "1101": "Cement", "2002": "Steel", "6505": "Plastic", "1301": "Plastic", # 傳產原物料
-    "2412": "Tel", "4904": "Tel", # 電信
+    "2330": "Semi", "2454": "Semi", "2303": "Semi", "3034": "Semi", "2379": "Semi",
+    "2317": "AI_Hw", "3231": "AI_Hw", "2382": "AI_Hw", "6669": "AI_Hw", "2357": "AI_Hw",
+    "2603": "Ship", "2609": "Ship",
+    "2881": "Fin", "2882": "Fin", "5871": "Fin", "2891": "Fin",
+    "3008": "Optic",
+    "1605": "Wire", "1513": "Power", "2308": "Power",
+    "1101": "Cement", "2002": "Steel", "6505": "Plastic", "1301": "Plastic",
+    "2412": "Tel", "4904": "Tel"
 }
 
-# === 新增：產業趨勢劇本 (AI 觀點) ===
 sector_trends = {
-    "Semi": {
-        "bull": "受惠 AI 高效能運算需求爆發，先進製程產能滿載，產業循環向上。",
-        "bear": "消費性電子庫存去化緩慢，成熟製程面臨價格競爭壓力。"
-    },
-    "AI_Hw": {
-        "bull": "雲端巨頭持續擴大資本支出，AI 伺服器與邊緣運算裝置出貨強勁。",
-        "bear": "供應鏈缺料問題緩解後，市場擔憂毛利率遭壓縮，評價面臨修正。"
-    },
-    "Ship": {
-        "bull": "地緣政治緊張導致紅海航運受阻，運價指數(SCFI)維持高檔震盪。",
-        "bear": "全球新船運力大量投放，供過於求壓力浮現，運價恐面臨回調。"
-    },
-    "Fin": {
-        "bull": "受惠高利率環境與投資收益回升，銀行與壽險獲利動能穩健。",
-        "bear": "避險成本居高不下，加上降息預期反覆，影響淨利差表現。"
-    },
-    "Power": {
-        "bull": "台電強韌電網計畫持續釋單，綠能基礎建設需求強勁，訂單能見度長。",
-        "bear": "原材料銅價波動大，且漲多後評價偏高，面臨獲利了結賣壓。"
-    },
-    "Default": { # 預設 (找不到產業時用)
-        "bull": "資金輪動健康，產業具備題材性，吸引法人買盤進駐。",
-        "bear": "產業前景不明朗，市場資金撤出，短線面臨估值修正。"
-    }
+    "Semi": {"bull": "AI 晶片需求強勁，先進製程產能滿載。", "bear": "消費性電子復甦緩慢，成熟製程競爭加劇。"},
+    "AI_Hw": {"bull": "雲端伺服器資本支出擴大，出貨動能強勁。", "bear": "缺料問題緩解後，市場擔憂毛利遭到壓縮。"},
+    "Ship": {"bull": "紅海危機推升運價，SCFI 指數維持高檔。", "bear": "全球新船運力大量投放，供需失衡壓力大。"},
+    "Fin": {"bull": "投資收益回升，銀行利差維持穩健。", "bear": "避險成本居高不下，降息預期反覆干擾。"},
+    "Power": {"bull": "強韌電網計畫持續釋單，綠能需求長線看好。", "bear": "原物料價格波動，短線漲多面臨估值修正。"},
+    "Default": {"bull": "資金輪動健康，具備題材吸引法人進駐。", "bear": "產業前景不明朗，資金撤出，面臨修正壓力。"}
 }
 
 # --- 1. 核心邏輯 ---
@@ -65,50 +50,40 @@ def analyze_stock_strategy(ticker_code, current_price, ma20, ma60, trend_list):
     bias_20 = ((current_price - ma20) / ma20) * 100
     rating, color_class, predict_score, reason = "觀察", "tag-hold", 50, ""
     
-    # 1. 取得產業趨勢
-    # 從代號找產業 key，找不到就用 Default
     sector_key = ticker_sector_map.get(ticker_code, "Default")
     
-    # 2. 技術面判斷
     if current_price > ma20 and current_price > ma60 and bias_20 > 5:
         rating, color_class, predict_score = "強力推薦", "tag-strong", 90
-        # 取得該產業的「利多」描述
         trend_desc = sector_trends.get(sector_key, sector_trends["Default"])["bull"]
-        reason = f"🔥 <b>技術面：</b>股價強勢站穩月線({ma20:.1f})，乖離率 {bias_20:.1f}% 動能強勁。<br>🌍 <b>產業面：</b>{trend_desc}"
-        
+        reason = f"🔥 <b>技術面：</b>強勢站穩月線({ma20:.1f})，乖離率 {bias_20:.1f}%。<br>🌍 <b>產業面：</b>{trend_desc}"
     elif current_price > ma20 and bias_20 > 0:
         rating, color_class, predict_score = "買進", "tag-buy", 70
         trend_desc = sector_trends.get(sector_key, sector_trends["Default"])["bull"]
         reason = f"📈 <b>技術面：</b>站上月線支撐({ma20:.1f})，短線轉強。<br>🌍 <b>產業面：</b>{trend_desc}"
-        
     elif current_price < ma20 and current_price < ma60:
         rating, color_class, predict_score = "避開", "tag-sell", 10
-        # 取得該產業的「利空」描述
         trend_desc = sector_trends.get(sector_key, sector_trends["Default"])["bear"]
-        reason = f"⚠️ <b>技術面：</b>跌破月線({ma20:.1f})與季線，上方壓力大。<br>🌍 <b>產業面：</b>{trend_desc}"
-        
+        reason = f"⚠️ <b>技術面：</b>跌破月季線，上方壓力大。<br>🌍 <b>產業面：</b>{trend_desc}"
     elif current_price < ma20:
         rating, color_class, predict_score = "賣出", "tag-sell", 30
         trend_desc = sector_trends.get(sector_key, sector_trends["Default"])["bear"]
         reason = f"📉 <b>技術面：</b>跌破月線({ma20:.1f})，動能轉弱。<br>🌍 <b>產業面：</b>{trend_desc}"
-        
     else:
-        # 觀察中的產業描述通常比較中性，這裡我們隨機挑選或用通用描述
-        reason = f"👀 <b>技術面：</b>股價在月線({ma20:.1f})附近震盪。<br>🌍 <b>產業面：</b>該產業目前多空消息紛雜，等待方向浮現。"
+        reason = f"👀 <b>技術面：</b>月線({ma20:.1f})附近震盪。<br>🌍 <b>產業面：</b>多空消息紛雜，等待方向。"
         
     return rating, color_class, reason, predict_score
 
-# --- 2. 抓取資料 ---
+# --- 2. 資料處理 ---
 @st.cache_data(ttl=300) 
-def fetch_fetch_stock_data_wrapper(tickers):
+def fetch_stock_data_wrapper(tickers):
     if not tickers: return None
     return yf.download(tickers, period="6mo", group_by='ticker', progress=False)
 
 def process_stock_data():
     current_map = st.session_state.watch_list
     tickers = list(current_map.keys())
-    with st.spinner(f'AI 正在整合 {len(tickers)} 檔個股技術面與產業數據...'):
-        data_download = fetch_fetch_stock_data_wrapper(tickers)
+    with st.spinner(f'AI 正在計算 {len(tickers)} 檔個股數據...'):
+        data_download = fetch_stock_data_wrapper(tickers)
     
     rows = []
     if data_download is None or len(tickers) == 0: return []
@@ -126,17 +101,22 @@ def process_stock_data():
             daily_change_pct = ((current_price - prev_price) / prev_price) * 100
             ma20 = sum(closes_list[-20:]) / 20
             ma60 = sum(closes_list[-60:]) / 60
-            
-            # 傳入代號 (不含.TW) 以便查找產業
             clean_code = ticker.replace(".TW", "")
             
             rating, color_class, reason, score = analyze_stock_strategy(
                 clean_code, current_price, ma20, ma60, closes_list[-10:]
             )
+            
+            # === 置頂邏輯 ===
+            # 如果這檔是最後加入的 (last_added)，給它一個超高的分數加成，讓它排第一
+            is_new = (ticker == st.session_state.last_added)
+            final_sort_key = 9999 if is_new else score 
+
             rows.append({
                 "code": clean_code, "name": current_map[ticker],
                 "url": f"https://tw.stock.yahoo.com/quote/{ticker}",
-                "price": current_price, "change": daily_change_pct, "score": score,
+                "price": current_price, "change": daily_change_pct, 
+                "score": final_sort_key, # 用這個排序
                 "ma20": ma20, "rating": rating, "rating_class": color_class,
                 "reason": reason, "trend": closes_list[-30:]
             })
@@ -157,27 +137,50 @@ def make_sparkline(data):
     color = "#dc3545" if data[-1] > data[0] else "#28a745"
     return f'<svg width="{width}" height="{height}" style="overflow:visible"><polyline points="{" ".join(points)}" fill="none" stroke="{color}" stroke-width="2"/><circle cx="{points[-1].split(",")[0]}" cy="{points[-1].split(",")[1]}" r="3" fill="{color}"/></svg>'
 
-# --- 4. 介面 ---
+# --- 4. 介面與新增功能 ---
 st.title("🚀 台股 AI 飆股神探")
+
 with st.container():
     col_add, col_info = st.columns([2, 3])
     with col_add:
+        # 使用 form 防止 enter 自動重整造成的邏輯錯誤
         with st.form(key='add_stock_form', clear_on_submit=True):
             col_input, col_btn = st.columns([3, 1])
-            with col_input: new_ticker = st.text_input("輸入代號", placeholder="輸入代號")
+            with col_input: new_ticker = st.text_input("輸入代號", placeholder="輸入代號 (如 1616)")
             with col_btn: submitted = st.form_submit_button("新增")
+            
             if submitted and new_ticker:
                 full_ticker = f"{new_ticker}.TW"
-                if full_ticker not in st.session_state.watch_list:
+                
+                # 檢查是否已存在
+                if full_ticker in st.session_state.watch_list:
+                     st.warning(f"{new_ticker} 已經在清單中了！")
+                else:
+                    # 嘗試抓取資料
                     try:
-                        if not yf.Ticker(full_ticker).history(period='1d').empty:
-                            st.session_state.watch_list[full_ticker] = f"自選股-{new_ticker}"
-                            st.success(f"已加入 {new_ticker}")
-                            st.rerun()
-                        else: st.error("代號錯誤")
-                    except: st.error("連線錯誤")
+                        ticker_obj = yf.Ticker(full_ticker)
+                        # 檢查是否有歷史股價 (驗證代號是否正確)
+                        hist = ticker_obj.history(period='5d')
+                        
+                        if not hist.empty:
+                            # 1. 抓取正確名稱 (嘗試 longName -> shortName -> 代號)
+                            stock_name = ticker_obj.info.get('longName', None)
+                            if stock_name is None:
+                                stock_name = ticker_obj.info.get('shortName', new_ticker)
+                            
+                            # 2. 更新 Session State
+                            st.session_state.watch_list[full_ticker] = stock_name
+                            st.session_state.last_added = full_ticker # 設定為最新加入
+                            
+                            st.success(f"成功加入：{new_ticker} {stock_name}")
+                            st.rerun() # 強制刷新，避免跑到下方的 except
+                        else:
+                            st.error(f"找不到代號 {new_ticker}，請確認是否正確。")
+                    except Exception as e:
+                        st.error(f"連線或代號錯誤，請稍後再試。")
+
     with col_info:
-        st.info("💡 內容升級：AI 評測現在包含 **「技術指標分析」** 與 **「產業趨勢解讀」**。")
+        st.info("💡 **最新功能**：新加入的股票會自動置頂顯示，並嘗試抓取公司全名。")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
@@ -193,7 +196,6 @@ html_content = """
     table { width: 100%; border-collapse: collapse; font-size: 15px; }
     th { background: #f2f2f2; padding: 12px; text-align: left; position: sticky; top: 0; z-index: 10; border-bottom: 2px solid #ddd; }
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
-    
     tr { position: relative; z-index: 1; }
     tr:hover { background: #f8f9fa; z-index: 100; position: relative; }
     
@@ -203,19 +205,14 @@ html_content = """
     
     .tooltip-container { position: relative; display: inline-block; cursor: help; padding: 5px 10px; border-radius: 20px; font-weight: bold; font-size: 13px; transition: all 0.2s; }
     .tooltip-container:hover { transform: scale(1.05); }
-    
     .tooltip-text { 
         visibility: hidden; width: 350px; background-color: #2c3e50; color: #fff; 
-        text-align: left; border-radius: 8px; padding: 15px; position: absolute; 
-        z-index: 9999; 
-        bottom: 140%; left: 50%; margin-left: -175px; 
-        opacity: 0; transition: opacity 0.3s; font-weight: normal; font-size: 14px; line-height: 1.6; 
-        pointer-events: none; box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+        text-align: left; border-radius: 8px; padding: 15px; position: absolute; z-index: 9999; 
+        bottom: 140%; left: 50%; margin-left: -175px; opacity: 0; transition: opacity 0.3s; 
+        font-weight: normal; font-size: 14px; line-height: 1.6; pointer-events: none; 
+        box-shadow: 0 5px 15px rgba(0,0,0,0.5);
     }
-    .tooltip-text::after { 
-        content: ""; position: absolute; top: 100%; left: 50%; margin-left: -6px; 
-        border-width: 6px; border-style: solid; border-color: #2c3e50 transparent transparent transparent; 
-    }
+    .tooltip-text::after { content: ""; position: absolute; top: 100%; left: 50%; margin-left: -6px; border-width: 6px; border-style: solid; border-color: #2c3e50 transparent transparent transparent; }
     .tooltip-container:hover .tooltip-text { visibility: visible; opacity: 1; }
 
     tr:nth-child(-n+3) .tooltip-text { bottom: auto; top: 140%; }
@@ -260,4 +257,4 @@ html_content += "</tbody></table></body></html>"
 components.html(html_content, height=800, scrolling=True)
 
 st.markdown("---")
-st.caption("資料來源：Yahoo Finance API | 產業觀點為 AI 模擬生成")
+st.caption("資料來源：Yahoo Finance API")
