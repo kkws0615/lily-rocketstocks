@@ -5,7 +5,7 @@ import yfinance as yf
 import requests
 import re
 
-st.set_page_config(page_title="台股AI標股神探 (排序增強版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (完美排序版)", layout="wide")
 
 # --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
@@ -23,7 +23,7 @@ if 'watch_list' not in st.session_state:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 1. 擴充內建字典 (包含長榮航、聯成、康舒) ---
+# --- 1. 字典與資料庫 ---
 tw_stock_dict = {
     "台積電": "2330", "鴻海": "2317", "聯發科": "2454", "廣達": "2382", "富邦金": "2881",
     "國泰金": "2882", "中華電": "2412", "台達電": "2308", "聯電": "2303", "中信金": "2891",
@@ -32,7 +32,7 @@ tw_stock_dict = {
     "南亞": "1303", "第一金": "2892", "合庫金": "5880", "台新金": "2887", "永豐金": "2890",
     "台化": "1326", "中鋼": "2002", "統一超": "2912", "和泰車": "2207", "上海商銀": "5876",
     "研華": "2395", "智邦": "2345", "光寶科": "2301", "台泥": "1101", "華城": "1519",
-    "緯穎": "6669", "聯詠": "3034", "瑞昱": "2379", "台塑化": "6505", "長榮航": "2618", # 加入長榮航
+    "緯穎": "6669", "聯詠": "3034", "瑞昱": "2379", "台塑化": "6505", "長榮航": "2618",
     "華航": "2610", "陽明": "2609", "萬海": "2615", "亞泥": "1102", "遠東新": "1402",
     "遠傳": "4904", "台灣大": "3045", "中租-KY": "5871", "矽力*-KY": "6415", "欣興": "3037",
     "南亞科": "2408", "華新": "1605", "大聯大": "3702", "新光金": "2888", "彰銀": "2801",
@@ -43,7 +43,6 @@ tw_stock_dict = {
     "友達": "2409", "群創": "3481", "聯成": "1313", "康舒": "6282", "鴻輝": "7769"
 }
 
-# 產業與趨勢資料 (省略部分以節省空間)
 ticker_sector_map = {"2330": "Semi", "2603": "Ship", "2618": "Trans"} 
 sector_trends = {
     "Semi": {"bull": "AI 晶片需求強勁。", "bear": "消費電子復甦慢。"},
@@ -52,113 +51,85 @@ sector_trends = {
     "Default": {"bull": "資金輪動健康，法人進駐。", "bear": "產業前景不明，面臨修正。"}
 }
 
-# --- 2. 搜尋與驗證邏輯 (重大修正) ---
-
+# --- 2. 搜尋邏輯 ---
 def search_yahoo_tw_native(query):
-    """直接問 Yahoo 奇摩股市，最準確"""
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
         r = requests.get(url, params={"query": query, "limit": 5}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
         data = r.json()
         results = data.get('data', {}).get('result', [])
-        
-        # 優先尋找完全匹配的名稱
         for res in results:
             if res.get('name') == query and res.get('exchange') in ['TAI', 'TWO']:
                 suffix = ".TW" if res['exchange'] == 'TAI' else ".TWO"
                 return f"{res['symbol']}{suffix}", res['name']
-
-        # 如果沒有完全匹配，回傳第一個相關的台股
         for res in results:
             if res.get('exchange') in ['TAI', 'TWO']:
                 suffix = ".TW" if res['exchange'] == 'TAI' else ".TWO"
                 return f"{res['symbol']}{suffix}", res['name']
-    except:
-        pass
+    except: pass
     return None, None
 
 def validate_and_search(query):
     query = query.strip()
-    
-    # 1. 處理純數字 (代號)
     if query.isdigit():
-        # 簡單過濾：台股代號通常是 4 碼 (上市櫃) 或 4-6 碼 (興櫃)
-        if len(query) < 3: 
-            return None, None, "代號太短"
-            
+        if len(query) < 3: return None, None, "代號太短"
         symbol = f"{query}.TW"
-        # 驗證是否存在
         try:
             t = yf.Ticker(symbol)
             if not t.history(period='1d').empty:
-                # 嘗試抓中文名
-                name = tw_stock_dict.get(query) # 先查字典
-                if not name:
-                    # 沒名字就顯示代號
-                    name = f"自選股-{query}" 
+                name = tw_stock_dict.get(query, f"自選股-{query}")
                 return symbol, name, None
-            
-            # 試試上櫃
             symbol = f"{query}.TWO"
             t = yf.Ticker(symbol)
             if not t.history(period='1d').empty:
                 name = tw_stock_dict.get(query, f"自選股-{query}")
                 return symbol, name, None
-                
-            return None, None, "找不到此代號 (請確認是否上市櫃/興櫃)"
-        except:
-             return None, None, "連線錯誤"
+            return None, None, "找不到此代號"
+        except: return None, None, "連線錯誤"
 
-    # 2. 處理文字 (股名) - 解決 "長榮航" 變 "長榮" 的問題
-    
-    # A. 優先：字典 "精確" 匹配 (Exact Match)
-    if query in tw_stock_dict:
-        return f"{tw_stock_dict[query]}.TW", query, None
-        
-    # B. 次要：Yahoo API 搜尋 (聯成、康舒 靠這個)
+    if query in tw_stock_dict: return f"{tw_stock_dict[query]}.TW", query, None
     symbol, name = search_yahoo_tw_native(query)
-    if symbol:
-        return symbol, name, None
-        
-    # C. 最後：字典 "模糊" 匹配 (只有當上面都找不到時才用)
+    if symbol: return symbol, name, None
     for name, code in tw_stock_dict.items():
-        if query in name:
-            return f"{code}.TW", name, None
-            
+        if query in name: return f"{code}.TW", name, None
     return None, None, "找不到此股票名稱"
 
-# --- 3. 核心分析邏輯 ---
+# --- 3. 分析邏輯 ---
 def analyze_stock_strategy(ticker_code, current_price, ma20, ma60):
+    # 回傳值多了 sort_order，用來做表格的 data-value 排序
     rating, color_class, predict_score = "觀察", "tag-hold", 50
+    sort_order = 2 # 預設排序 (強力=4, 買進=3, 觀察=2, 賣出/避開=1)
+    
     sector_key = ticker_sector_map.get(ticker_code, "Default")
     
-    # 處理新股
     if ma60 is None:
-        if ma20 and current_price > ma20: return "短多", "tag-buy", 60, f"🚀 <b>新股：</b>站上月線({ma20:.1f})，動能強。<br>⚠️ 波動大注意風險。"
-        else: return "觀察", "tag-hold", 40, "👀 <b>新股：</b>資料不足算季線，建議觀察。"
+        if ma20 and current_price > ma20: 
+            return "短多", "tag-buy", 60, f"🚀 <b>新股：</b>站上月線({ma20:.1f})，動能強。<br>⚠️ 波動大注意風險。", 3
+        else: 
+            return "觀察", "tag-hold", 40, "👀 <b>新股：</b>資料不足算季線，建議觀察。", 2
 
     bias_20 = ((current_price - ma20) / ma20) * 100
     
     if current_price > ma20 and current_price > ma60 and bias_20 > 5:
-        rating, color_class, predict_score = "強力推薦", "tag-strong", 90
+        rating, color_class, predict_score, sort_order = "強力推薦", "tag-strong", 90, 4
         trend = sector_trends.get(sector_key, sector_trends["Default"])["bull"]
         reason = f"🔥 <b>技術：</b>站穩月季線，乖離 {bias_20:.1f}%。<br>🌍 <b>產業：</b>{trend}"
     elif current_price > ma20 and bias_20 > 0:
-        rating, color_class, predict_score = "買進", "tag-buy", 70
+        rating, color_class, predict_score, sort_order = "買進", "tag-buy", 70, 3
         trend = sector_trends.get(sector_key, sector_trends["Default"])["bull"]
         reason = f"📈 <b>技術：</b>站上月線({ma20:.1f})，轉強。<br>🌍 <b>產業：</b>{trend}"
     elif current_price < ma20 and current_price < ma60:
-        rating, color_class, predict_score = "避開", "tag-sell", 10
+        rating, color_class, predict_score, sort_order = "避開", "tag-sell", 10, 1
         trend = sector_trends.get(sector_key, sector_trends["Default"])["bear"]
         reason = f"⚠️ <b>技術：</b>跌破月季線，壓力大。<br>🌍 <b>產業：</b>{trend}"
     elif current_price < ma20:
-        rating, color_class, predict_score = "賣出", "tag-sell", 30
+        rating, color_class, predict_score, sort_order = "賣出", "tag-sell", 30, 1
         trend = sector_trends.get(sector_key, sector_trends["Default"])["bear"]
         reason = f"📉 <b>技術：</b>跌破月線({ma20:.1f})。<br>🌍 <b>產業：</b>{trend}"
     else:
         reason = "👀 <b>技術：</b>月線附近震盪。<br>🌍 <b>產業：</b>方向未明。"
         
-    return rating, color_class, predict_score, reason
+    return rating, color_class, predict_score, reason, sort_order
 
 # --- 4. 資料處理 ---
 @st.cache_data(ttl=300) 
@@ -190,9 +161,9 @@ def process_stock_data():
             ma60 = sum(closes_list[-60:]) / 60 if len(closes_list) >= 60 else None
             clean_code = ticker.replace(".TW", "").replace(".TWO", "")
             
-            rating, color_class, score, reason = analyze_stock_strategy(clean_code, current_price, ma20, ma60)
+            # 獲取排序權重 sort_order
+            rating, color_class, score, reason, sort_order = analyze_stock_strategy(clean_code, current_price, ma20, ma60)
             
-            # 置頂邏輯
             is_new = (ticker == st.session_state.last_added)
             final_sort_key = 9999 if is_new else score 
             ma20_disp = f"{ma20:.1f}" if ma20 else "-"
@@ -200,13 +171,14 @@ def process_stock_data():
             rows.append({
                 "code": clean_code, "name": current_map[ticker],
                 "url": f"https://tw.stock.yahoo.com/quote/{ticker}",
-                "price": current_price, "change": change_pct, "score": final_sort_key,
+                "price": current_price, "change": change_pct, 
+                "score": final_sort_key,
+                "sort_order": sort_order, # 加入這個給前端排序用
                 "ma20_disp": ma20_disp, "rating": rating, "rating_class": color_class,
                 "reason": reason, "trend": closes_list[-30:]
             })
         except: continue
     
-    # 預設排序 (置頂優先，接著按分數)
     return sorted(rows, key=lambda x: x['score'], reverse=True)
 
 # --- 5. 畫圖與介面 ---
@@ -224,7 +196,6 @@ def make_sparkline(data):
     return f'<svg width="{w}" height="{h}" style="overflow:visible"><polyline points="{" ".join(pts)}" fill="none" stroke="{c}" stroke-width="2"/><circle cx="{pts[-1].split(",")[0]}" cy="{pts[-1].split(",")[1]}" r="3" fill="{c}"/></svg>'
 
 st.title("🚀 台股 AI 飆股神探")
-
 with st.container():
     col_add, col_info = st.columns([2, 3])
     with col_add:
@@ -232,32 +203,28 @@ with st.container():
             col_in, col_btn = st.columns([3, 1])
             with col_in: query = st.text_input("新增監控", placeholder="輸入代號(3260)或名稱(長榮航)")
             with col_btn: submitted = st.form_submit_button("新增")
-            
             if submitted and query:
-                # 驗證輸入是否有包含無效字元 (例如 '3260O')
                 if not query.isdigit() and re.search(r'\d+[a-zA-Z]', query):
-                     st.error("代號格式錯誤 (請輸入純數字或中文名稱)")
+                     st.error("代號格式錯誤")
                 else:
                     symbol, name, err = validate_and_search(query)
                     if symbol:
-                        if symbol in st.session_state.watch_list:
-                            st.warning(f"{name} 已在清單中")
+                        if symbol in st.session_state.watch_list: st.warning(f"{name} 已在清單中")
                         else:
                             st.session_state.watch_list[symbol] = name
                             st.session_state.last_added = symbol
                             st.success(f"已加入：{name}")
                             st.rerun()
-                    else:
-                        st.error(f"加入失敗：{err}")
+                    else: st.error(f"加入失敗：{err}")
 
     with col_info:
-        st.info("💡 **功能更新**：支援點擊表頭排序！修正「長榮航」搜尋與「聯成/康舒」查找問題。")
+        st.info("💡 **完美修正**：表頭固定不被擋、AI 評級可正確點擊排序！")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
 if filter_strong: data_rows = [d for d in data_rows if d['rating'] == "強力推薦"]
 
-# --- 6. HTML/JS 渲染 (含點擊排序功能) ---
+# --- 6. HTML/JS 渲染 (data-value 排序與 z-index 修復) ---
 html_content = """
 <!DOCTYPE html>
 <html>
@@ -266,11 +233,24 @@ html_content = """
     body { font-family: "Microsoft JhengHei", sans-serif; margin: 0; padding-bottom: 50px; }
     table { width: 100%; border-collapse: collapse; font-size: 15px; }
     
-    /* 表頭樣式：加上游標手勢 */
-    th { background: #f2f2f2; padding: 12px; text-align: left; position: sticky; top: 0; z-index: 10; border-bottom: 2px solid #ddd; cursor: pointer; user-select: none; }
+    /* === 標題固定修正 === */
+    /* 將 z-index 設為超大 (10000)，確保它永遠在最上層 */
+    th { 
+        background: #f2f2f2; 
+        padding: 12px; 
+        text-align: left; 
+        position: sticky; 
+        top: 0; 
+        z-index: 10000; 
+        border-bottom: 2px solid #ddd; 
+        cursor: pointer; 
+        user-select: none; 
+    }
     th:hover { background: #e6e6e6; }
     
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
+    
+    /* 修正圖層與提示框 */
     tr { position: relative; z-index: 1; }
     tr:hover { background: #f8f9fa; z-index: 100; position: relative; }
     
@@ -278,7 +258,6 @@ html_content = """
     .down { color: #2ca02c; font-weight: bold; }
     a { text-decoration: none; color: #0066cc; font-weight: bold; background: #f0f7ff; padding: 2px 6px; border-radius: 4px; }
     
-    /* Tooltip */
     .tooltip-container { position: relative; display: inline-block; cursor: help; padding: 5px 10px; border-radius: 20px; font-weight: bold; font-size: 13px; transition: all 0.2s; }
     .tooltip-text { 
         visibility: hidden; width: 350px; background-color: #2c3e50; color: #fff; text-align: left; 
@@ -289,6 +268,7 @@ html_content = """
     }
     .tooltip-text::after { content: ""; position: absolute; top: 100%; left: 50%; margin-left: -6px; border-width: 6px; border-style: solid; border-color: #2c3e50 transparent transparent transparent; }
     .tooltip-container:hover .tooltip-text { visibility: visible; opacity: 1; }
+    
     tr:nth-child(-n+3) .tooltip-text { bottom: auto; top: 140%; }
     tr:nth-child(-n+3) .tooltip-text::after { top: auto; bottom: 100%; border-color: transparent transparent #2c3e50 transparent; }
 
@@ -304,7 +284,7 @@ function sortTable(n) {
   var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
   table = document.getElementById("stockTable");
   switching = true;
-  dir = "asc"; 
+  dir = "desc"; // 預設降冪排序 (價格高->低，評級好->壞)
   while (switching) {
     switching = false;
     rows = table.rows;
@@ -313,25 +293,26 @@ function sortTable(n) {
       x = rows[i].getElementsByTagName("TD")[n];
       y = rows[i + 1].getElementsByTagName("TD")[n];
       
-      // 獲取純文字內容 (去除 HTML 標籤)
-      var xContent = x.textContent || x.innerText;
-      var yContent = y.textContent || y.innerText;
+      // === 關鍵修正：使用 data-value 進行數值排序 ===
+      // 如果有 data-value 屬性，就用它來排序 (解決評級排序問題)
+      var xVal = x.getAttribute("data-value") || (x.textContent || x.innerText);
+      var yVal = y.getAttribute("data-value") || (y.textContent || y.innerText);
       
-      // 嘗試轉為數字比較 (針對價格、漲跌幅)
-      var xNum = parseFloat(xContent.replace(/[^0-9.-]/g, ''));
-      var yNum = parseFloat(yContent.replace(/[^0-9.-]/g, ''));
+      // 轉成數字比較
+      var xNum = parseFloat(xVal.replace(/[^0-9.-]/g, ''));
+      var yNum = parseFloat(yVal.replace(/[^0-9.-]/g, ''));
 
       if (dir == "asc") {
         if (!isNaN(xNum) && !isNaN(yNum)) {
             if (xNum > yNum) { shouldSwitch = true; break; }
         } else {
-            if (xContent.toLowerCase() > yContent.toLowerCase()) { shouldSwitch = true; break; }
+            if (xVal.toLowerCase() > yVal.toLowerCase()) { shouldSwitch = true; break; }
         }
       } else if (dir == "desc") {
         if (!isNaN(xNum) && !isNaN(yNum)) {
             if (xNum < yNum) { shouldSwitch = true; break; }
         } else {
-            if (xContent.toLowerCase() < yContent.toLowerCase()) { shouldSwitch = true; break; }
+            if (xVal.toLowerCase() < yVal.toLowerCase()) { shouldSwitch = true; break; }
         }
       }
     }
@@ -340,8 +321,8 @@ function sortTable(n) {
       switching = true;
       switchcount ++;      
     } else {
-      if (switchcount == 0 && dir == "asc") {
-        dir = "desc";
+      if (switchcount == 0 && dir == "desc") {
+        dir = "asc";
         switching = true;
       }
     }
@@ -366,13 +347,14 @@ function sortTable(n) {
 
 for row in data_rows:
     p_cls = "up" if row['change'] > 0 else "down"
+    # data-value 是排序的關鍵！我們把數值塞在這裡，JavaScript 讀取這個來排序
     html_content += f"""
         <tr>
-            <td><a href="{row['url']}" target="_blank">{row['code']}</a></td>
-            <td>{row['name']}</td>
-            <td class="{p_cls}">{row['price']:.1f} <span class="sub-text">({row['ma20_disp']})</span></td>
-            <td class="{p_cls}">{row['change']:.2f}%</td>
-            <td>
+            <td data-value="{row['code']}"><a href="{row['url']}" target="_blank">{row['code']}</a></td>
+            <td data-value="{row['name']}">{row['name']}</td>
+            <td data-value="{row['price']}" class="{p_cls}">{row['price']:.1f} <span class="sub-text">({row['ma20_disp']})</span></td>
+            <td data-value="{row['change']}" class="{p_cls}">{row['change']:.2f}%</td>
+            <td data-value="{row['sort_order']}">
                 <div class="tooltip-container {row['rating_class']}">
                     {row['rating']}
                     <span class="tooltip-text">{row['reason']}</span>
