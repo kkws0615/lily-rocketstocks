@@ -5,7 +5,7 @@ import yfinance as yf
 import requests
 import re
 
-st.set_page_config(page_title="台股AI標股神探 (JS懸浮版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (最終修正版)", layout="wide")
 
 # --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
@@ -51,19 +51,17 @@ sector_trends = {
     "Default": {"bull": "資金輪動健康，法人進駐。", "bear": "產業前景不明，面臨修正。"}
 }
 
-# --- 2. 搜尋邏輯 ---
+# --- 2. 搜尋與驗證邏輯 ---
 def search_yahoo_tw_native(query):
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
         r = requests.get(url, params={"query": query, "limit": 5}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
         data = r.json()
         results = data.get('data', {}).get('result', [])
-        # 優先完全匹配
         for res in results:
             if res.get('name') == query and res.get('exchange') in ['TAI', 'TWO']:
                 suffix = ".TW" if res['exchange'] == 'TAI' else ".TWO"
                 return f"{res['symbol']}{suffix}", res['name']
-        # 模糊匹配
         for res in results:
             if res.get('exchange') in ['TAI', 'TWO']:
                 suffix = ".TW" if res['exchange'] == 'TAI' else ".TWO"
@@ -102,7 +100,6 @@ def analyze_stock_strategy(ticker_code, current_price, ma20, ma60):
     sort_order = 2 
     sector_key = ticker_sector_map.get(ticker_code, "Default")
     
-    # 新股邏輯 (MA60 為 None)
     if ma60 is None:
         if ma20 and current_price > ma20: 
             return "短多", "tag-buy", 60, f"🚀 <b>新股：</b>站上月線({ma20:.1f})，動能強。<br>⚠️ 波動大注意風險。", 3
@@ -153,18 +150,13 @@ def process_stock_data():
             closes = df_stock['Close']
             if isinstance(closes, pd.DataFrame): closes = closes.iloc[:, 0]
             closes_list = closes.dropna().tolist()
-            
-            # 放寬限制：只要有 5 天資料就顯示 (針對新股 7769)
             if len(closes_list) < 5: continue
             
             current_price = closes_list[-1]
             prev_price = closes_list[-2]
             change_pct = ((current_price - prev_price) / prev_price) * 100
-            
-            # 彈性計算 MA
             ma20 = sum(closes_list[-20:]) / 20 if len(closes_list) >= 20 else None
             ma60 = sum(closes_list[-60:]) / 60 if len(closes_list) >= 60 else None
-            
             clean_code = ticker.replace(".TW", "").replace(".TWO", "")
             
             rating, color_class, score, reason, sort_order = analyze_stock_strategy(clean_code, current_price, ma20, ma60)
@@ -172,9 +164,8 @@ def process_stock_data():
             is_new = (ticker == st.session_state.last_added)
             final_sort_key = 9999 if is_new else score 
             ma20_disp = f"{ma20:.1f}" if ma20 else "-"
-
-            # 修正：將 reason 進行 HTML 轉義，防止 JS 錯誤 (雖然這裡是 f-string 但安全起見)
-            # 實際上我們會在 HTML attribute 裡放這個字串，所以要小心單引號
+            
+            # 處理單引號，避免 JS 錯誤
             safe_reason = reason.replace("'", "&#39;")
 
             rows.append({
@@ -183,7 +174,7 @@ def process_stock_data():
                 "price": current_price, "change": change_pct, 
                 "score": final_sort_key, "sort_order": sort_order,
                 "ma20_disp": ma20_disp, "rating": rating, "rating_class": color_class,
-                "reason": safe_reason, # 用處理過的 safe_reason
+                "reason": safe_reason, 
                 "trend": closes_list[-30:]
             })
         except: continue
@@ -196,14 +187,25 @@ def make_sparkline(data):
     w, h = 100, 30
     min_v, max_v = min(data), max(data)
     if max_v == min_v: return ""
+    
+    # 建立座標點列表
     pts = []
     for i, val in enumerate(data):
         x = (i / (len(data) - 1)) * w
         y = h - ((val - min_v) / (max_v - min_v)) * (h - 4) - 2
         pts.append(f"{x},{y}")
+    
     c = "#dc3545" if data[-1] > data[0] else "#28a745"
-    # 修復 points 變數名稱錯誤
-    return f'<svg width="{w}" height="{h}" style="overflow:visible"><polyline points="{" ".join(pts)}" fill="none" stroke="{c}" stroke-width="2"/><circle cx="{pts[-1].split(",")[0]}" cy="{pts[-1].split(",")[1]}" r="3" fill="{c}"/></svg>'
+    
+    # 拆解最後一個點的座標，為了安全起見
+    last_pt = pts[-1]
+    last_x, last_y = last_pt.split(",")
+    
+    # === 修正點：變數 pts, last_x, last_y 確保一致 ===
+    svg_line = f'<polyline points="{" ".join(pts)}" fill="none" stroke="{c}" stroke-width="2"/>'
+    svg_circle = f'<circle cx="{last_x}" cy="{last_y}" r="3" fill="{c}"/>'
+    
+    return f'<svg width="{w}" height="{h}" style="overflow:visible">{svg_line}{svg_circle}</svg>'
 
 st.title("🚀 台股 AI 飆股神探")
 with st.container():
@@ -228,7 +230,7 @@ with st.container():
                     else: st.error(f"加入失敗：{err}")
 
     with col_info:
-        st.info("💡 **顯示修復**：JS 懸浮視窗技術，保證評級提示不被遮擋，標題列完美置頂！")
+        st.info("💡 **除錯完成**：系統與圖表已恢復正常運作，標題列置頂功能已修復。")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
@@ -243,14 +245,14 @@ html_content = """
     body { font-family: "Microsoft JhengHei", sans-serif; margin: 0; padding-bottom: 50px; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 15px; }
     
-    /* 1. 標題列：背景不透明，確保蓋住內容 */
+    /* 1. 標題列：z-index 999 確保蓋住內容 */
     th { 
         background-color: #f2f2f2; 
         padding: 12px; 
         text-align: left; 
         position: sticky; 
         top: 0; 
-        z-index: 50; /* 比內容高 */
+        z-index: 999; 
         border-bottom: 2px solid #ddd; 
         cursor: pointer; 
         user-select: none;
@@ -260,18 +262,17 @@ html_content = """
     
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
     
-    /* 2. 內容列：層級低 */
+    /* 2. 內容列：z-index 1，遠低於標題 */
     tr { position: relative; z-index: 1; }
     tr:hover { background: #f8f9fa; } 
-    /* 注意：這裡不再設定 z-index 100，因為我們改用 JS 顯示提示框 */
     
     .up { color: #d62728; font-weight: bold; }
     .down { color: #2ca02c; font-weight: bold; }
     a { text-decoration: none; color: #0066cc; font-weight: bold; background: #f0f7ff; padding: 2px 6px; border-radius: 4px; }
     
-    /* 3. 獨立的懸浮視窗 (Floating Tooltip) */
+    /* 3. 獨立懸浮視窗 */
     #floating-tooltip {
-        position: fixed; /* 脫離表格流，參考視窗定位 */
+        position: fixed; 
         display: none;
         width: 300px;
         background-color: #2c3e50;
@@ -279,11 +280,11 @@ html_content = """
         text-align: left;
         border-radius: 8px;
         padding: 15px;
-        z-index: 99999; /* 無敵高，蓋住一切 */
+        z-index: 99999; /* 無敵高，絕對最上層 */
         font-size: 14px;
         line-height: 1.6;
         box-shadow: 0 5px 15px rgba(0,0,0,0.5);
-        pointer-events: none; /* 讓滑鼠點擊可以穿透它 */
+        pointer-events: none;
     }
     
     .rating-cell { cursor: help; }
@@ -296,7 +297,6 @@ html_content = """
 </style>
 
 <script>
-// === 排序功能 ===
 function sortTable(n) {
   var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
   table = document.getElementById("stockTable");
@@ -332,7 +332,6 @@ function sortTable(n) {
   }
 }
 
-// === 懸浮視窗功能 (核心修復) ===
 function showTooltip(e, content) {
     var tt = document.getElementById('floating-tooltip');
     tt.innerHTML = content;
@@ -347,19 +346,10 @@ function hideTooltip() {
 
 function moveTooltip(e) {
     var tt = document.getElementById('floating-tooltip');
-    // 讓提示框稍微偏離滑鼠一點，避免擋住視線
     var x = e.clientX + 15;
     var y = e.clientY + 15;
-    
-    // 邊界檢查 (防止超出右邊界)
-    if (x + 320 > window.innerWidth) {
-        x = e.clientX - 315; // 改顯示在左邊
-    }
-    // 邊界檢查 (防止超出下邊界)
-    if (y + 100 > window.innerHeight) {
-        y = e.clientY - 100; // 改顯示在上面
-    }
-    
+    if (x + 320 > window.innerWidth) { x = e.clientX - 315; }
+    if (y + 100 > window.innerHeight) { y = e.clientY - 100; }
     tt.style.left = x + 'px';
     tt.style.top = y + 'px';
 }
@@ -385,11 +375,6 @@ function moveTooltip(e) {
 
 for row in data_rows:
     p_cls = "up" if row['change'] > 0 else "down"
-    
-    # 建構滑鼠事件
-    # onmousemove: 當滑鼠在格子內移動時，更新 Tooltip 位置
-    # onmouseover: 進入格子時顯示
-    # onmouseout: 離開時隱藏
     tooltip_events = f"onmouseover=\"showTooltip(event, '{row['reason']}')\" onmousemove=\"moveTooltip(event)\" onmouseout=\"hideTooltip()\""
     
     html_content += f"""
@@ -398,11 +383,9 @@ for row in data_rows:
             <td data-value="{row['name']}">{row['name']}</td>
             <td data-value="{row['price']}" class="{p_cls}">{row['price']:.1f} <span class="sub-text">({row['ma20_disp']})</span></td>
             <td data-value="{row['change']}" class="{p_cls}">{row['change']:.2f}%</td>
-            
             <td data-value="{row['sort_order']}" class="rating-cell" {tooltip_events}>
                 <span class="{row['rating_class']}">{row['rating']}</span>
             </td>
-            
             <td>{make_sparkline(row['trend'])}</td>
         </tr>
     """
