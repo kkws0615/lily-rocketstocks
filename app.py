@@ -3,9 +3,9 @@ import streamlit.components.v1 as components
 import pandas as pd
 import yfinance as yf
 import numpy as np
-import random
+import requests # 新增：用來呼叫搜尋 API
 
-st.set_page_config(page_title="台股AI標股神探 (中文修正版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (智慧搜尋版)", layout="wide")
 
 # --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
@@ -44,7 +44,48 @@ sector_trends = {
     "Default": {"bull": "資金輪動健康，具備題材吸引法人進駐。", "bear": "產業前景不明朗，資金撤出，面臨修正壓力。"}
 }
 
-# --- 1. 核心邏輯 ---
+# --- 1. 關鍵功能：智慧搜尋 (輸入中文找代號) ---
+def smart_search_stock(query):
+    # 使用 Yahoo Finance 的搜尋 API
+    url = "https://query1.finance.yahoo.com/v1/finance/search"
+    params = {
+        "q": query,
+        "quotesCount": 1, 
+        "newsCount": 0,
+        "lang": "zh-Hant-TW", # 強制回傳繁體中文
+        "region": "TW"
+    }
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=5)
+        data = r.json()
+        
+        if 'quotes' in data and len(data['quotes']) > 0:
+            result = data['quotes'][0]
+            symbol = result.get('symbol')
+            # 確保是台股 (.TW 或 .TWO)
+            if symbol and (symbol.endswith('.TW') or symbol.endswith('.TWO')):
+                # 優先抓取 shortname (通常是中文簡稱)
+                name = result.get('shortname') or result.get('longname') or symbol
+                return symbol, name
+    except:
+        pass
+    
+    # 如果 API 失敗，嘗試直接用 yfinance 檢查 (針對純數字輸入)
+    if query.isdigit():
+        symbol = f"{query}.TW"
+        try:
+            t = yf.Ticker(symbol)
+            # 簡單檢查
+            if not t.history(period='1d').empty:
+                return symbol, f"自選股-{query}"
+        except:
+            pass
+            
+    return None, None
+
+# --- 2. 核心邏輯 ---
 def analyze_stock_strategy(ticker_code, current_price, ma20, ma60, trend_list):
     bias_20 = ((current_price - ma20) / ma20) * 100
     rating, color_class, predict_score, reason = "觀察", "tag-hold", 50, ""
@@ -72,7 +113,7 @@ def analyze_stock_strategy(ticker_code, current_price, ma20, ma60, trend_list):
         
     return rating, color_class, reason, predict_score
 
-# --- 2. 資料處理 ---
+# --- 3. 資料處理 ---
 @st.cache_data(ttl=300) 
 def fetch_stock_data_wrapper(tickers):
     if not tickers: return None
@@ -100,7 +141,7 @@ def process_stock_data():
             daily_change_pct = ((current_price - prev_price) / prev_price) * 100
             ma20 = sum(closes_list[-20:]) / 20
             ma60 = sum(closes_list[-60:]) / 60
-            clean_code = ticker.replace(".TW", "")
+            clean_code = ticker.replace(".TW", "").replace(".TWO", "")
             
             rating, color_class, reason, score = analyze_stock_strategy(
                 clean_code, current_price, ma20, ma60, closes_list[-10:]
@@ -121,7 +162,7 @@ def process_stock_data():
         except: continue
     return sorted(rows, key=lambda x: x['score'], reverse=True)
 
-# --- 3. 畫圖 ---
+# --- 4. 畫圖 ---
 def make_sparkline(data):
     if not data: return ""
     width, height = 100, 30
@@ -135,68 +176,43 @@ def make_sparkline(data):
     color = "#dc3545" if data[-1] > data[0] else "#28a745"
     return f'<svg width="{width}" height="{height}" style="overflow:visible"><polyline points="{" ".join(points)}" fill="none" stroke="{color}" stroke-width="2"/><circle cx="{points[-1].split(",")[0]}" cy="{points[-1].split(",")[1]}" r="3" fill="{color}"/></svg>'
 
-# --- 4. 介面與新增功能 ---
+# --- 5. 介面與新增功能 ---
 st.title("🚀 台股 AI 飆股神探")
 
 with st.container():
     col_add, col_info = st.columns([2, 3])
     with col_add:
+        # 使用 form
         with st.form(key='add_stock_form', clear_on_submit=True):
             col_input, col_btn = st.columns([3, 1])
             with col_input: 
-                # === 介面修改提示 ===
-                new_ticker_input = st.text_input("輸入代號與名稱", placeholder="範例：1616 億泰 (自動命名) 或 1616")
+                search_query = st.text_input("新增監控", placeholder="輸入：1616 或 億泰")
             with col_btn: 
-                submitted = st.form_submit_button("新增")
+                submitted = st.form_submit_button("搜尋加入")
             
-            if submitted and new_ticker_input:
-                # === 關鍵邏輯修改：解析輸入 ===
-                # 如果使用者輸入 "1616 億泰"，我們就直接用 "億泰"
-                # 如果使用者只輸入 "1616"，我們才去抓 (可能會抓到英文)
+            if submitted and search_query:
+                # 呼叫智慧搜尋
+                symbol, name = smart_search_stock(search_query)
                 
-                parts = new_ticker_input.strip().split()
-                stock_code = parts[0]
-                custom_name = parts[1] if len(parts) > 1 else None # 如果有第二部分，那就是名字
-                
-                if not stock_code.isdigit():
-                    st.error("代號必須是數字！")
-                else:
-                    full_ticker = f"{stock_code}.TW"
-                    
-                    if full_ticker in st.session_state.watch_list:
-                         st.warning(f"{stock_code} 已經在清單中了！")
+                if symbol:
+                    if symbol in st.session_state.watch_list:
+                        st.warning(f"{name} ({symbol}) 已經在清單中了！")
                     else:
-                        try:
-                            # 先檢查是否存在
-                            ticker_obj = yf.Ticker(full_ticker)
-                            hist = ticker_obj.history(period='5d')
-                            
-                            if not hist.empty:
-                                # 決定顯示名稱
-                                if custom_name:
-                                    final_name = custom_name # 使用者自己輸入的中文
-                                else:
-                                    # 嘗試抓取，抓不到就用代號
-                                    final_name = ticker_obj.info.get('longName', f"自選股-{stock_code}")
-                                
-                                st.session_state.watch_list[full_ticker] = final_name
-                                st.session_state.last_added = full_ticker
-                                
-                                st.success(f"成功加入：{stock_code} {final_name}")
-                                st.rerun()
-                            else:
-                                st.error(f"找不到代號 {stock_code}，請確認。")
-                        except Exception as e:
-                            st.error(f"連線錯誤，請稍後再試。")
+                        st.session_state.watch_list[symbol] = name
+                        st.session_state.last_added = symbol
+                        st.success(f"已加入：{name} ({symbol})")
+                        st.rerun()
+                else:
+                    st.error(f"找不到「{search_query}」，請確認名稱或代號。")
 
     with col_info:
-        st.info("💡 **小撇步**：為了避免抓到英文名，建議輸入 **「代號+空格+中文名」** (如 `1616 億泰`)，系統會直接使用你輸入的名字！")
+        st.info("💡 **智慧搜尋**：支援輸入 **中文名稱** (如：億泰) 或 **代號** (如：1616)。")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
 if filter_strong: data_rows = [d for d in data_rows if d['rating'] == "強力推薦"]
 
-# --- 5. HTML 渲染 ---
+# --- 6. HTML 渲染 ---
 html_content = """
 <!DOCTYPE html>
 <html>
@@ -206,6 +222,8 @@ html_content = """
     table { width: 100%; border-collapse: collapse; font-size: 15px; }
     th { background: #f2f2f2; padding: 12px; text-align: left; position: sticky; top: 0; z-index: 10; border-bottom: 2px solid #ddd; }
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
+    
+    /* 修正圖層問題 */
     tr { position: relative; z-index: 1; }
     tr:hover { background: #f8f9fa; z-index: 100; position: relative; }
     
@@ -215,6 +233,8 @@ html_content = """
     
     .tooltip-container { position: relative; display: inline-block; cursor: help; padding: 5px 10px; border-radius: 20px; font-weight: bold; font-size: 13px; transition: all 0.2s; }
     .tooltip-container:hover { transform: scale(1.05); }
+    
+    /* 加大提示框與優化排版 */
     .tooltip-text { 
         visibility: hidden; width: 350px; background-color: #2c3e50; color: #fff; 
         text-align: left; border-radius: 8px; padding: 15px; position: absolute; z-index: 9999; 
@@ -225,6 +245,7 @@ html_content = """
     .tooltip-text::after { content: ""; position: absolute; top: 100%; left: 50%; margin-left: -6px; border-width: 6px; border-style: solid; border-color: #2c3e50 transparent transparent transparent; }
     .tooltip-container:hover .tooltip-text { visibility: visible; opacity: 1; }
 
+    /* 前三列向下顯示 */
     tr:nth-child(-n+3) .tooltip-text { bottom: auto; top: 140%; }
     tr:nth-child(-n+3) .tooltip-text::after { top: auto; bottom: 100%; border-color: transparent transparent #2c3e50 transparent; }
 
