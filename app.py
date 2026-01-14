@@ -5,7 +5,7 @@ import yfinance as yf
 import requests
 import re
 
-st.set_page_config(page_title="台股AI標股神探 (標題修復版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (最終修復版)", layout="wide")
 
 # --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
@@ -189,7 +189,9 @@ def make_sparkline(data):
         y = h - ((val - min_v) / (max_v - min_v)) * (h - 4) - 2
         pts.append(f"{x},{y}")
     c = "#dc3545" if data[-1] > data[0] else "#28a745"
-    return f'<svg width="{w}" height="{h}" style="overflow:visible"><polyline points="{" ".join(pts)}" fill="none" stroke="{c}" stroke-width="2"/><circle cx="{points[-1].split(",")[0]}" cy="{points[-1].split(",")[1]}" r="3" fill="{c}"/></svg>'
+    
+    # === 修正點：使用 pts 變數而非 points ===
+    return f'<svg width="{w}" height="{h}" style="overflow:visible"><polyline points="{" ".join(pts)}" fill="none" stroke="{c}" stroke-width="2"/><circle cx="{pts[-1].split(",")[0]}" cy="{pts[-1].split(",")[1]}" r="3" fill="{c}"/></svg>'
 
 st.title("🚀 台股 AI 飆股神探")
 with st.container():
@@ -212,14 +214,15 @@ with st.container():
                             st.success(f"已加入：{name}")
                             st.rerun()
                     else: st.error(f"加入失敗：{err}")
+
     with col_info:
-        st.info("💡 **顯示修復**：捲動時標題列會固定置頂，不會再被內容擋住。")
+        st.info("💡 **完美修正**：表頭固定不被擋、AI 評級可正確點擊排序！")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
 if filter_strong: data_rows = [d for d in data_rows if d['rating'] == "強力推薦"]
 
-# --- 6. HTML/JS 渲染 (標題置頂 Z-Index 修復版) ---
+# --- 6. HTML/JS 渲染 ---
 html_content = """
 <!DOCTYPE html>
 <html>
@@ -228,10 +231,8 @@ html_content = """
     body { font-family: "Microsoft JhengHei", sans-serif; margin: 0; padding-bottom: 50px; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 15px; }
     
-    /* === 標題列 (Header) === */
-    /* z-index: 999 確保它在最高層 (比 tr:hover 高) */
     th { 
-        background-color: #f2f2f2; 
+        background: #f2f2f2; 
         padding: 12px; 
         text-align: left; 
         position: sticky; 
@@ -240,30 +241,23 @@ html_content = """
         border-bottom: 2px solid #ddd; 
         cursor: pointer; 
         user-select: none;
-        box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1); /* 增加陰影讓層次更明顯 */
+        box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
     }
     th:hover { background: #e6e6e6; }
     
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
     
-    /* === 內容列 (Row) === */
-    /* 平常層級很低 (1) */
     tr { position: relative; z-index: 1; }
-    
-    /* 滑鼠移上去時層級變高 (10)，但絕對不能超過 th 的 999 */
     tr:hover { background: #f8f9fa; z-index: 10; }
     
     .up { color: #d62728; font-weight: bold; }
     .down { color: #2ca02c; font-weight: bold; }
     a { text-decoration: none; color: #0066cc; font-weight: bold; background: #f0f7ff; padding: 2px 6px; border-radius: 4px; }
     
-    /* Tooltip 設定 (顯示在最上層) */
     .tooltip-container { position: relative; display: inline-block; cursor: help; padding: 5px 10px; border-radius: 20px; font-weight: bold; font-size: 13px; transition: all 0.2s; }
-    
     .tooltip-text { 
         visibility: hidden; width: 350px; background-color: #2c3e50; color: #fff; text-align: left; 
-        border-radius: 8px; padding: 15px; position: absolute; 
-        z-index: 1000; /* 比 th (999) 再高一點點，這樣才會浮在標題上面 */
+        border-radius: 8px; padding: 15px; position: absolute; z-index: 1000; 
         bottom: 140%; left: 50%; margin-left: -175px; opacity: 0; transition: opacity 0.3s; 
         font-weight: normal; font-size: 14px; line-height: 1.6; pointer-events: none; 
         box-shadow: 0 5px 15px rgba(0,0,0,0.5);
