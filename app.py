@@ -5,7 +5,7 @@ import yfinance as yf
 import requests
 import re
 
-st.set_page_config(page_title="台股AI標股神探 (標題修復版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (標示優化版)", layout="wide")
 
 # --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
@@ -100,7 +100,6 @@ def analyze_stock_strategy(ticker_code, current_price, ma20, ma60):
     sort_order = 2 
     sector_key = ticker_sector_map.get(ticker_code, "Default")
     
-    # 新股邏輯
     if ma60 is None:
         if ma20 and current_price > ma20: 
             return "短多", "tag-buy", 60, f"🚀 <b>新股：</b>站上月線({ma20:.1f})，動能強。<br>⚠️ 波動大注意風險。", 3
@@ -188,17 +187,13 @@ def make_sparkline(data):
     w, h = 100, 30
     min_v, max_v = min(data), max(data)
     if max_v == min_v: return ""
-    
-    # 計算座標點
     pts = []
     for i, val in enumerate(data):
         x = (i / (len(data) - 1)) * w
         y = h - ((val - min_v) / (max_v - min_v)) * (h - 4) - 2
         pts.append(f"{x},{y}")
-    
     c = "#dc3545" if data[-1] > data[0] else "#28a745"
     
-    # 取最後一個點畫圓 (正確變數名稱 pts)
     last_pt = pts[-1]
     last_x, last_y = last_pt.split(",")
     
@@ -230,13 +225,13 @@ with st.container():
                     else: st.error(f"加入失敗：{err}")
 
     with col_info:
-        st.info("💡 **顯示修復**：JS 懸浮視窗技術，保證評級提示不被遮擋，標題列完美置頂！")
+        st.info("💡 **顯示優化**：已清楚標示括號內數字為 **(月線)** 價格，方便判讀多空。")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
 if filter_strong: data_rows = [d for d in data_rows if d['rating'] == "強力推薦"]
 
-# --- 6. HTML/JS 渲染 (JS Floating Tooltip + 標題置頂修正) ---
+# --- 6. HTML/JS 渲染 ---
 html_content = """
 <!DOCTYPE html>
 <html>
@@ -245,14 +240,13 @@ html_content = """
     body { font-family: "Microsoft JhengHei", sans-serif; margin: 0; padding-bottom: 50px; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 15px; }
     
-    /* === 標題列：絕對置頂 (z-index: 10000) === */
     th { 
         background-color: #f2f2f2; 
         padding: 12px; 
         text-align: left; 
         position: sticky; 
         top: 0; 
-        z-index: 10000; /* 非常高的層級，確保蓋住內容 */
+        z-index: 10000; 
         border-bottom: 2px solid #ddd; 
         cursor: pointer; 
         user-select: none;
@@ -262,17 +256,13 @@ html_content = """
     
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
     
-    /* === 內容列：層級重置 (z-index: auto) === */
-    /* 移除之前的 z-index: 100，避免跟標題打架 */
-    tr { position: relative; }
+    tr { position: relative; z-index: 1; }
     tr:hover { background: #f8f9fa; } 
     
     .up { color: #d62728; font-weight: bold; }
     .down { color: #2ca02c; font-weight: bold; }
     a { text-decoration: none; color: #0066cc; font-weight: bold; background: #f0f7ff; padding: 2px 6px; border-radius: 4px; }
     
-    /* === 獨立懸浮視窗 (z-index: 99999) === */
-    /* 它在 HTML 最外層，所以不會被表格結構影響 */
     #floating-tooltip {
         position: fixed; 
         display: none;
@@ -282,7 +272,7 @@ html_content = """
         text-align: left;
         border-radius: 8px;
         padding: 15px;
-        z-index: 99999; /* 絕對無敵高 */
+        z-index: 99999; 
         font-size: 14px;
         line-height: 1.6;
         box-shadow: 0 5px 15px rgba(0,0,0,0.5);
@@ -296,10 +286,12 @@ html_content = """
     .tag-hold { color: #868e96; background: #fff; padding: 4px 8px; border-radius: 4px; border: 1px solid #eee; display: inline-block; font-weight: bold;}
     
     .sub-text { font-size: 12px; color: #888; margin-left: 5px; font-weight: normal; }
+    
+    /* 這裡定義標題的小字樣式 */
+    .header-sub { font-size: 12px; font-weight: normal; color: #666; margin-left: 4px; }
 </style>
 
 <script>
-// === 排序功能 (保留) ===
 function sortTable(n) {
   var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
   table = document.getElementById("stockTable");
@@ -335,7 +327,6 @@ function sortTable(n) {
   }
 }
 
-// === 懸浮視窗功能 ===
 function showTooltip(e, content) {
     var tt = document.getElementById('floating-tooltip');
     tt.innerHTML = content;
@@ -368,7 +359,9 @@ function moveTooltip(e) {
         <tr>
             <th onclick="sortTable(0)">代號 ⬍</th>
             <th onclick="sortTable(1)">股名 ⬍</th>
-            <th onclick="sortTable(2)">現價 ⬍</th>
+            
+            <th onclick="sortTable(2)">現價 <span class="header-sub">(月線)</span> ⬍</th>
+            
             <th onclick="sortTable(3)">漲跌 ⬍</th>
             <th onclick="sortTable(4)">AI 評級 ⬍</th>
             <th>近三月走勢</th>
@@ -379,8 +372,6 @@ function moveTooltip(e) {
 
 for row in data_rows:
     p_cls = "up" if row['change'] > 0 else "down"
-    
-    # 綁定 JS 事件
     tooltip_events = f"onmouseover=\"showTooltip(event, '{row['reason']}')\" onmousemove=\"moveTooltip(event)\" onmouseout=\"hideTooltip()\""
     
     html_content += f"""
@@ -389,11 +380,9 @@ for row in data_rows:
             <td data-value="{row['name']}">{row['name']}</td>
             <td data-value="{row['price']}" class="{p_cls}">{row['price']:.1f} <span class="sub-text">({row['ma20_disp']})</span></td>
             <td data-value="{row['change']}" class="{p_cls}">{row['change']:.2f}%</td>
-            
             <td data-value="{row['sort_order']}" class="rating-cell" {tooltip_events}>
                 <span class="{row['rating_class']}">{row['rating']}</span>
             </td>
-            
             <td>{make_sparkline(row['trend'])}</td>
         </tr>
     """
