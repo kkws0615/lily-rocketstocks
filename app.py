@@ -5,7 +5,7 @@ import yfinance as yf
 import requests
 import re
 
-st.set_page_config(page_title="台股AI標股神探 (最終修正版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (標題修復版)", layout="wide")
 
 # --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
@@ -51,7 +51,7 @@ sector_trends = {
     "Default": {"bull": "資金輪動健康，法人進駐。", "bear": "產業前景不明，面臨修正。"}
 }
 
-# --- 2. 搜尋與驗證邏輯 ---
+# --- 2. 搜尋邏輯 ---
 def search_yahoo_tw_native(query):
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
@@ -100,6 +100,7 @@ def analyze_stock_strategy(ticker_code, current_price, ma20, ma60):
     sort_order = 2 
     sector_key = ticker_sector_map.get(ticker_code, "Default")
     
+    # 新股邏輯
     if ma60 is None:
         if ma20 and current_price > ma20: 
             return "短多", "tag-buy", 60, f"🚀 <b>新股：</b>站上月線({ma20:.1f})，動能強。<br>⚠️ 波動大注意風險。", 3
@@ -155,8 +156,10 @@ def process_stock_data():
             current_price = closes_list[-1]
             prev_price = closes_list[-2]
             change_pct = ((current_price - prev_price) / prev_price) * 100
+            
             ma20 = sum(closes_list[-20:]) / 20 if len(closes_list) >= 20 else None
             ma60 = sum(closes_list[-60:]) / 60 if len(closes_list) >= 60 else None
+            
             clean_code = ticker.replace(".TW", "").replace(".TWO", "")
             
             rating, color_class, score, reason, sort_order = analyze_stock_strategy(clean_code, current_price, ma20, ma60)
@@ -164,8 +167,6 @@ def process_stock_data():
             is_new = (ticker == st.session_state.last_added)
             final_sort_key = 9999 if is_new else score 
             ma20_disp = f"{ma20:.1f}" if ma20 else "-"
-            
-            # 處理單引號，避免 JS 錯誤
             safe_reason = reason.replace("'", "&#39;")
 
             rows.append({
@@ -188,7 +189,7 @@ def make_sparkline(data):
     min_v, max_v = min(data), max(data)
     if max_v == min_v: return ""
     
-    # 建立座標點列表
+    # 計算座標點
     pts = []
     for i, val in enumerate(data):
         x = (i / (len(data) - 1)) * w
@@ -197,11 +198,10 @@ def make_sparkline(data):
     
     c = "#dc3545" if data[-1] > data[0] else "#28a745"
     
-    # 拆解最後一個點的座標，為了安全起見
+    # 取最後一個點畫圓 (正確變數名稱 pts)
     last_pt = pts[-1]
     last_x, last_y = last_pt.split(",")
     
-    # === 修正點：變數 pts, last_x, last_y 確保一致 ===
     svg_line = f'<polyline points="{" ".join(pts)}" fill="none" stroke="{c}" stroke-width="2"/>'
     svg_circle = f'<circle cx="{last_x}" cy="{last_y}" r="3" fill="{c}"/>'
     
@@ -230,13 +230,13 @@ with st.container():
                     else: st.error(f"加入失敗：{err}")
 
     with col_info:
-        st.info("💡 **除錯完成**：系統與圖表已恢復正常運作，標題列置頂功能已修復。")
+        st.info("💡 **顯示修復**：JS 懸浮視窗技術，保證評級提示不被遮擋，標題列完美置頂！")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
 if filter_strong: data_rows = [d for d in data_rows if d['rating'] == "強力推薦"]
 
-# --- 6. HTML/JS 渲染 (JS Floating Tooltip 版) ---
+# --- 6. HTML/JS 渲染 (JS Floating Tooltip + 標題置頂修正) ---
 html_content = """
 <!DOCTYPE html>
 <html>
@@ -245,14 +245,14 @@ html_content = """
     body { font-family: "Microsoft JhengHei", sans-serif; margin: 0; padding-bottom: 50px; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 15px; }
     
-    /* 1. 標題列：z-index 999 確保蓋住內容 */
+    /* === 標題列：絕對置頂 (z-index: 10000) === */
     th { 
         background-color: #f2f2f2; 
         padding: 12px; 
         text-align: left; 
         position: sticky; 
         top: 0; 
-        z-index: 999; 
+        z-index: 10000; /* 非常高的層級，確保蓋住內容 */
         border-bottom: 2px solid #ddd; 
         cursor: pointer; 
         user-select: none;
@@ -262,15 +262,17 @@ html_content = """
     
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
     
-    /* 2. 內容列：z-index 1，遠低於標題 */
-    tr { position: relative; z-index: 1; }
+    /* === 內容列：層級重置 (z-index: auto) === */
+    /* 移除之前的 z-index: 100，避免跟標題打架 */
+    tr { position: relative; }
     tr:hover { background: #f8f9fa; } 
     
     .up { color: #d62728; font-weight: bold; }
     .down { color: #2ca02c; font-weight: bold; }
     a { text-decoration: none; color: #0066cc; font-weight: bold; background: #f0f7ff; padding: 2px 6px; border-radius: 4px; }
     
-    /* 3. 獨立懸浮視窗 */
+    /* === 獨立懸浮視窗 (z-index: 99999) === */
+    /* 它在 HTML 最外層，所以不會被表格結構影響 */
     #floating-tooltip {
         position: fixed; 
         display: none;
@@ -280,7 +282,7 @@ html_content = """
         text-align: left;
         border-radius: 8px;
         padding: 15px;
-        z-index: 99999; /* 無敵高，絕對最上層 */
+        z-index: 99999; /* 絕對無敵高 */
         font-size: 14px;
         line-height: 1.6;
         box-shadow: 0 5px 15px rgba(0,0,0,0.5);
@@ -297,6 +299,7 @@ html_content = """
 </style>
 
 <script>
+// === 排序功能 (保留) ===
 function sortTable(n) {
   var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
   table = document.getElementById("stockTable");
@@ -332,6 +335,7 @@ function sortTable(n) {
   }
 }
 
+// === 懸浮視窗功能 ===
 function showTooltip(e, content) {
     var tt = document.getElementById('floating-tooltip');
     tt.innerHTML = content;
@@ -375,6 +379,8 @@ function moveTooltip(e) {
 
 for row in data_rows:
     p_cls = "up" if row['change'] > 0 else "down"
+    
+    # 綁定 JS 事件
     tooltip_events = f"onmouseover=\"showTooltip(event, '{row['reason']}')\" onmousemove=\"moveTooltip(event)\" onmouseout=\"hideTooltip()\""
     
     html_content += f"""
@@ -383,9 +389,11 @@ for row in data_rows:
             <td data-value="{row['name']}">{row['name']}</td>
             <td data-value="{row['price']}" class="{p_cls}">{row['price']:.1f} <span class="sub-text">({row['ma20_disp']})</span></td>
             <td data-value="{row['change']}" class="{p_cls}">{row['change']:.2f}%</td>
+            
             <td data-value="{row['sort_order']}" class="rating-cell" {tooltip_events}>
                 <span class="{row['rating_class']}">{row['rating']}</span>
             </td>
+            
             <td>{make_sparkline(row['trend'])}</td>
         </tr>
     """
