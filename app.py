@@ -2,15 +2,14 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import random
+import numpy as np
 
 # --- 設定網頁配置 ---
-st.set_page_config(page_title="台股AI標股神探", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (HTML終極版)", layout="wide")
 
-# --- 1. 核心功能：高速抓取股價 & AI 分析 ---
+# --- 1. 核心功能：高速抓取股價 ---
 @st.cache_data(ttl=600)
 def get_stock_data():
-    # 定義清單 (代號, 股名)
-    # 我們這裡列出 30 檔指標股，你可以自行擴充
     stocks_map = {
         "2330.TW": "台積電", "2454.TW": "聯發科", "2317.TW": "鴻海", "2603.TW": "長榮",
         "2609.TW": "陽明",   "2303.TW": "聯電",   "2881.TW": "富邦金", "2882.TW": "國泰金",
@@ -22,177 +21,217 @@ def get_stock_data():
         "2002.TW": "中鋼",   "2891.TW": "中信金"
     }
     
-    # AI 推薦理由庫 (模擬)
-    reasons_bull = [
-        "外資連五日買超，籌碼安定", 
-        "季線翻揚向上，均線多頭排列", 
-        "營收創歷史新高，動能強勁", 
-        "主力吃貨明顯，量能溫和放大", 
-        "突破下降趨勢線，打底完成"
-    ]
-    reasons_bear = [
-        "高檔爆量長黑，主力出貨", 
-        "跌破季線支撐，趨勢轉空", 
-        "法人連續調節，籌碼鬆動", 
-        "乖離率過大，面臨修正壓力", 
-        "營收不如預期，短線利空"
-    ]
+    reasons_bull = ["外資連五日買超", "季線翻揚向上", "營收創歷史新高", "主力吃貨明顯", "突破下降趨勢線", "KD黃金交叉"]
+    reasons_bear = ["高檔爆量長黑", "跌破季線支撐", "法人連續調節", "乖離率過大", "營收不如預期", "MACD死叉"]
 
-    # === 高速批量下載 (Batch Download) ===
-    # 這比迴圈快非常多，比較不會「沒反應」
     tickers = list(stocks_map.keys())
     
-    # 顯示載入狀態
-    with st.spinner('正在高速連線 Yahoo Finance 取得 30 檔即時報價...'):
-        # 一次抓取所有股票的 1 年歷史資料
-        data_download = yf.download(tickers, period="1y", group_by='ticker', progress=False)
+    # 批量下載數據
+    with st.spinner('AI 正在連線交易所取得即時報價與計算技術指標...'):
+        data_download = yf.download(tickers, period="3mo", group_by='ticker', progress=False)
     
     rows = []
     
     for ticker in tickers:
         try:
-            # 取得該股票的 DataFrame
             df_stock = data_download[ticker]
+            if df_stock.empty or len(df_stock) < 2: continue
             
-            # 如果資料是空的 (可能是下市或代號錯誤)
-            if df_stock.empty or len(df_stock) < 2:
-                continue
+            # 處理數據
+            closes = df_stock['Close'].dropna().tolist()
+            if len(closes) < 2: continue
             
-            # 整理數據
-            current_price = df_stock['Close'].iloc[-1]
-            prev_price = df_stock['Close'].iloc[-2]
-            
-            # 處理 NaN 的情況
-            if pd.isna(current_price) or pd.isna(prev_price):
-                continue
-                
+            current_price = closes[-1]
+            prev_price = closes[-2]
             daily_change_pct = ((current_price - prev_price) / prev_price) * 100
             
-            # 走勢圖數據 (處理 NaN 並轉為 list)
-            trend_data = df_stock['Close'].dropna().tolist()
-            
-            # --- 模擬 AI 預測 ---
+            # AI 預測模擬
             predicted_growth = round(random.uniform(-10, 30), 2)
             
-            # 決定評級與理由
-            rating = "一般"
-            reason_text = ""
-            
+            # 評級邏輯
             if predicted_growth > 15:
                 rating = "強力推薦"
-                # 理由加上 icon 讓畫面好看
-                reason_text = f"🔥 強力訊號：{random.choice(reasons_bull)}，建議積極佈局。"
+                color_class = "tag-strong"
+                reason = f"🔥 強力理由：{random.choice(reasons_bull)}，且{random.choice(reasons_bull)}，建議積極佈局。"
             elif predicted_growth > 5:
                 rating = "買進"
-                reason_text = f"📈 多方訊號：{random.choice(reasons_bull)}。"
+                color_class = "tag-buy"
+                reason = f"📈 買進理由：{random.choice(reasons_bull)}。"
             elif predicted_growth < -5:
                 rating = "避開"
-                reason_text = f"⚠️ 風險訊號：{random.choice(reasons_bear)}，建議觀望。"
+                color_class = "tag-sell"
+                reason = f"⚠️ 風險提示：{random.choice(reasons_bear)}。"
             else:
                 rating = "觀察"
-                reason_text = f"👀 盤整訊號：區間震盪整理中，等待方向浮現。"
+                color_class = "tag-hold"
+                reason = f"👀 觀察理由：目前區間震盪，{random.choice(reasons_bear)}。"
 
-            # 準備連結
-            yahoo_link = f"https://tw.stock.yahoo.com/quote/{ticker}"
-            
             rows.append({
-                "代號連結": yahoo_link, # 隱藏的連結
-                "股名": stocks_map[ticker],
-                "現價": current_price,
-                "漲跌(%)": daily_change_pct,
-                "預測漲幅": predicted_growth,
-                "評級": rating,
-                "AI分析詳情": reason_text, # 這欄位如果太長，瀏覽器會自動變成 hover 顯示
-                "走勢圖": trend_data
+                "code": ticker.replace(".TW", ""),
+                "name": stocks_map[ticker],
+                "url": f"https://tw.stock.yahoo.com/quote/{ticker}",
+                "price": current_price,
+                "change": daily_change_pct,
+                "predict": predicted_growth,
+                "rating": rating,
+                "rating_class": color_class,
+                "reason": reason,
+                "trend": closes[-30:] # 取最近 30 天畫圖
             })
-            
-        except Exception as e:
-            # 容錯處理，避免單一股票錯誤導致整個程式掛掉
+        except:
             continue
             
-    return pd.DataFrame(rows)
+    return sorted(rows, key=lambda x: x['predict'], reverse=True)
 
-# --- 2. 介面設計 ---
+# --- 2. 輔助功能：畫 SVG 走勢圖 (Python 畫圖轉 HTML) ---
+def make_sparkline_svg(data):
+    if not data: return ""
+    width = 100
+    height = 30
+    min_val = min(data)
+    max_val = max(data)
+    if max_val == min_val: return ""
+    
+    # 正規化座標
+    points = []
+    for i, val in enumerate(data):
+        x = (i / (len(data) - 1)) * width
+        # Y軸要反轉，因為 SVG 0 在上方
+        y = height - ((val - min_val) / (max_val - min_val)) * height
+        points.append(f"{x},{y}")
+    
+    polyline = " ".join(points)
+    color = "red" if data[-1] > data[0] else "green"
+    
+    return f"""
+    <svg width="{width}" height="{height}" style="overflow: visible">
+        <polyline points="{polyline}" fill="none" stroke="{color}" stroke-width="2" />
+        <circle cx="{points[-1].split(',')[0]}" cy="{points[-1].split(',')[1]}" r="3" fill="{color}" />
+    </svg>
+    """
 
-st.title("🚀 台股 AI 飆股快篩")
+# --- 3. 介面與 HTML 生成 ---
+
+st.title("🚀 台股 AI 飆股快篩 (HTML 互動版)")
+st.caption("滑鼠移至「評級」上方可查看詳細 AI 分析")
 
 col1, col2 = st.columns([1, 5])
 with col1:
-    # 大按鈕
-    filter_strong = st.checkbox("🔥 只顯示強力推薦", value=False)
-with col2:
-    if filter_strong:
-        st.info("已篩選出 AI 預測漲幅 > 15% 的強勢股！")
-    else:
-        st.info("顯示所有監控個股，滑鼠移至「AI 分析詳情」可看完整理由。")
+    filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
-# 讀取資料
-df = get_stock_data()
-
-# --- 3. 篩選與排序 ---
-
+data = get_stock_data()
 if filter_strong:
-    final_df = df[df["評級"] == "強力推薦"]
-else:
-    final_df = df
+    data = [d for d in data if d['rating'] == "強力推薦"]
 
-# 排序
-final_df = final_df.sort_values(by="預測漲幅", ascending=False)
+# === 關鍵：CSS 樣式表 (定義 Tooltip 和表格漂亮的外觀) ===
+st.markdown("""
+<style>
+    /* 表格整體樣式 */
+    table { width: 100%; border-collapse: collapse; font-family: "Microsoft JhengHei", sans-serif; }
+    th { background-color: #f0f2f6; padding: 10px; text-align: left; font-size: 14px; border-bottom: 2px solid #ddd; }
+    td { padding: 12px 10px; border-bottom: 1px solid #eee; vertical-align: middle; font-size: 15px; }
+    tr:hover { background-color: #f9f9f9; }
 
-# --- 4. 表格顯示 (使用最穩定的 dataframe) ---
-
-# 顏色邏輯
-def highlight_vals(row):
-    styles = []
-    # 根據漲跌變色
-    color = 'red' if row['漲跌(%)'] > 0 else 'green'
+    /* 數字顏色 */
+    .up { color: #d62728; font-weight: bold; }
+    .down { color: #2ca02c; font-weight: bold; }
     
-    for col in row.index:
-        if col in ['現價', '漲跌(%)', '預測漲幅']:
-            styles.append(f'color: {color}; font-weight: bold;')
-        elif col == 'AI分析詳情':
-            styles.append('color: #555;') # 分析文字用深灰色
-        else:
-            styles.append('')
-    return styles
+    /* 連結樣式 */
+    a { text-decoration: none; color: #1f77b4; font-weight: bold; }
+    a:hover { text-decoration: underline; }
 
-st.dataframe(
-    final_df.style.apply(highlight_vals, axis=1),
-    use_container_width=True,
-    height=800,
-    hide_index=True,
-    column_config={
-        "代號連結": st.column_config.LinkColumn(
-            "代號", 
-            # 抓取網址中的數字顯示
-            display_text="https://tw\.stock\.yahoo\.com/quote/(.*?)\.TW",
-            width="small",
-            help="點擊開啟 Yahoo 股市"
-        ),
-        "股名": st.column_config.TextColumn("股名", width="small"),
-        "現價": st.column_config.NumberColumn("現價", format="$%.1f"),
-        "漲跌(%)": st.column_config.NumberColumn("漲跌", format="%.2f%%"),
-        "預測漲幅": st.column_config.NumberColumn("預測漲幅", format="%.2f%%"),
-        "評級": st.column_config.TextColumn("評級", width="small"),
-        
-        # === 技巧在這裡 ===
-        # 我們設定一個較小的寬度，這樣長文字就會變成 "..."
-        # 使用者滑鼠移上去時，Streamlit/瀏覽器會自動顯示完整文字
-        "AI分析詳情": st.column_config.TextColumn(
-            "AI 分析理由 (滑鼠查看)", 
-            width="medium", 
-            help="AI 綜合技術面與籌碼面的簡評"
-        ),
-        
-        "走勢圖": st.column_config.LineChartColumn(
-            "近一年走勢", 
-            width="medium",
-            y_min=0
-        )
-    },
-    # 設定欄位順序
-    column_order=("代號連結", "股名", "現價", "漲跌(%)", "預測漲幅", "評級", "AI分析詳情", "走勢圖")
-)
+    /* === Tooltip 核心 CSS (這就是你要的！) === */
+    .tooltip {
+        position: relative;
+        display: inline-block;
+        cursor: help; /* 滑鼠游標變成問號 */
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-weight: bold;
+    }
+    
+    /* Tooltip 文字框本身 (預設隱藏) */
+    .tooltip .tooltiptext {
+        visibility: hidden;
+        width: 220px;
+        background-color: #333;
+        color: #fff;
+        text-align: left;
+        border-radius: 6px;
+        padding: 10px;
+        position: absolute;
+        z-index: 1;
+        bottom: 125%; /* 顯示在上方 */
+        left: 50%;
+        margin-left: -110px;
+        opacity: 0;
+        transition: opacity 0.3s;
+        font-size: 13px;
+        font-weight: normal;
+        box-shadow: 0px 4px 8px rgba(0,0,0,0.2);
+        line-height: 1.4;
+    }
+    
+    /* 箭頭 */
+    .tooltip .tooltiptext::after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        margin-left: -5px;
+        border-width: 5px;
+        border-style: solid;
+        border-color: #333 transparent transparent transparent;
+    }
 
-st.markdown("---")
-st.caption("資料來源：Yahoo Finance API (即時連線)")
+    /* 滑鼠移上去時顯示 */
+    .tooltip:hover .tooltiptext {
+        visibility: visible;
+        opacity: 1;
+    }
+
+    /* 標籤顏色 */
+    .tag-strong { background-color: #ffebeb; color: #d62728; border: 1px solid #ffcccc; }
+    .tag-buy { background-color: #f0fff0; color: #2ca02c; border: 1px solid #ccffcc; }
+    .tag-hold { background-color: #f8f9fa; color: #666; border: 1px solid #eee; }
+    .tag-sell { background-color: #e9ecef; color: #495057; }
+
+</style>
+""", unsafe_allow_html=True)
+
+# === 4. 組合 HTML 表格 ===
+html_content = "<table>"
+html_content += "<thead><tr><th>代號</th><th>股名</th><th>現價</th><th>漲跌</th><th>預測漲幅</th><th>AI 評級 (懸停看原因)</th><th>近三月走勢</th></tr></thead>"
+html_content += "<tbody>"
+
+for row in data:
+    # 決定顏色 class
+    price_color = "up" if row['change'] > 0 else "down"
+    predict_color = "up" if row['predict'] > 0 else "down"
+    
+    # 產生走勢圖 SVG
+    sparkline = make_sparkline_svg(row['trend'])
+    
+    # 組合每一列 HTML
+    html_content += f"""
+    <tr>
+        <td><a href="{row['url']}" target="_blank">{row['code']}</a></td>
+        <td>{row['name']}</td>
+        <td class="{price_color}">{row['price']:.1f}</td>
+        <td class="{price_color}">{row['change']:.2f}%</td>
+        <td class="{predict_color}">{row['predict']:.2f}%</td>
+        <td>
+            <div class="tooltip {row['rating_class']}">
+                {row['rating']}
+                <span class="tooltiptext">{row['reason']}</span>
+            </div>
+        </td>
+        <td>{sparkline}</td>
+    </tr>
+    """
+
+html_content += "</tbody></table>"
+
+# === 5. 渲染 HTML ===
+st.markdown(html_content, unsafe_allow_html=True)
+st.markdown("<br><hr><small>資料來源：Yahoo Finance (延遲報價) | 技術架構：HTML5 + CSS3 + Python SVG Generation</small>", unsafe_allow_html=True)
