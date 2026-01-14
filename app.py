@@ -3,9 +3,10 @@ import streamlit.components.v1 as components
 import pandas as pd
 import yfinance as yf
 import numpy as np
-import requests # 新增：用來呼叫搜尋 API
+import requests
+import re # 用來處理正規表示法抓名字
 
-st.set_page_config(page_title="台股AI標股神探 (智慧搜尋版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (中文爬蟲版)", layout="wide")
 
 # --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
@@ -28,9 +29,9 @@ ticker_sector_map = {
     "2330": "Semi", "2454": "Semi", "2303": "Semi", "3034": "Semi", "2379": "Semi",
     "2317": "AI_Hw", "3231": "AI_Hw", "2382": "AI_Hw", "6669": "AI_Hw", "2357": "AI_Hw",
     "2603": "Ship", "2609": "Ship",
-    "2881": "Fin", "2882": "Fin", "5871": "Fin", "2891": "Fin",
+    "2881": "Fin", "2882": "Fin", "5871": "Fin", "2891": "Fin", "2887": "Fin",
     "3008": "Optic",
-    "1605": "Wire", "1513": "Power", "2308": "Power",
+    "1605": "Wire", "1513": "Power", "2308": "Power", "1616": "Wire",
     "1101": "Cement", "2002": "Steel", "6505": "Plastic", "1301": "Plastic",
     "2412": "Tel", "4904": "Tel"
 }
@@ -41,18 +42,65 @@ sector_trends = {
     "Ship": {"bull": "紅海危機推升運價，SCFI 指數維持高檔。", "bear": "全球新船運力大量投放，供需失衡壓力大。"},
     "Fin": {"bull": "投資收益回升，銀行利差維持穩健。", "bear": "避險成本居高不下，降息預期反覆干擾。"},
     "Power": {"bull": "強韌電網計畫持續釋單，綠能需求長線看好。", "bear": "原物料價格波動，短線漲多面臨估值修正。"},
+    "Wire": {"bull": "台電強韌電網與銅價上漲雙重利多。", "bear": "銅價回檔，庫存跌價損失風險增加。"},
     "Default": {"bull": "資金輪動健康，具備題材吸引法人進駐。", "bear": "產業前景不明朗，資金撤出，面臨修正壓力。"}
 }
 
-# --- 1. 關鍵功能：智慧搜尋 (輸入中文找代號) ---
+# --- 1. 核心功能：絕對準確的中文爬蟲 ---
+def get_chinese_name_from_web(symbol):
+    """
+    直接爬取 Yahoo 奇摩股市網頁標題
+    網頁標題格式通常為: "台新金 (2887) - 個股走勢 - Yahoo奇摩股市"
+    """
+    url = f"https://tw.stock.yahoo.com/quote/{symbol}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        r.encoding = 'utf-8' # 強制編碼
+        if r.status_code == 200:
+            # 使用 Regex 抓取 <title>...</title>
+            match = re.search(r'<title>(.*?) - 個股走勢', r.text)
+            if match:
+                title_text = match.group(1) # 例如 "台新金 (2887)"
+                # 再次用 Regex 取出括號前的中文
+                name_match = re.search(r'^(.*?) \(', title_text)
+                if name_match:
+                    return name_match.group(1).strip()
+                return title_text.split('(')[0].strip()
+    except:
+        pass
+    return None
+
 def smart_search_stock(query):
-    # 使用 Yahoo Finance 的搜尋 API
+    # 1. 如果輸入的是純數字 (如 1616)
+    if query.isdigit():
+        symbol = f"{query}.TW"
+        # 驗證是否存在
+        try:
+            # 先試 TW
+            if not yf.Ticker(symbol).history(period='1d').empty:
+                # 爬取中文名
+                name = get_chinese_name_from_web(symbol)
+                return symbol, (name if name else f"自選股-{query}")
+            
+            # 再試 TWO (上櫃)
+            symbol = f"{query}.TWO"
+            if not yf.Ticker(symbol).history(period='1d').empty:
+                name = get_chinese_name_from_web(symbol)
+                return symbol, (name if name else f"自選股-{query}")
+        except:
+            pass
+        return None, None
+
+    # 2. 如果輸入的是中文 (如 台新金)
     url = "https://query1.finance.yahoo.com/v1/finance/search"
     params = {
         "q": query,
-        "quotesCount": 1, 
+        "quotesCount": 10, # 抓多一點來過濾
         "newsCount": 0,
-        "lang": "zh-Hant-TW", # 強制回傳繁體中文
+        "lang": "zh-Hant-TW",
         "region": "TW"
     }
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -61,27 +109,18 @@ def smart_search_stock(query):
         r = requests.get(url, params=params, headers=headers, timeout=5)
         data = r.json()
         
-        if 'quotes' in data and len(data['quotes']) > 0:
-            result = data['quotes'][0]
-            symbol = result.get('symbol')
-            # 確保是台股 (.TW 或 .TWO)
-            if symbol and (symbol.endswith('.TW') or symbol.endswith('.TWO')):
-                # 優先抓取 shortname (通常是中文簡稱)
-                name = result.get('shortname') or result.get('longname') or symbol
-                return symbol, name
+        if 'quotes' in data:
+            for result in data['quotes']:
+                symbol = result.get('symbol', '')
+                # 只要結尾是 .TW 或 .TWO 的就是目標
+                if symbol.endswith('.TW') or symbol.endswith('.TWO'):
+                    # 找到代號後，一樣去爬網頁抓最準確的中文名
+                    name = get_chinese_name_from_web(symbol)
+                    if not name:
+                        name = result.get('shortname') or result.get('longname') or query
+                    return symbol, name
     except:
         pass
-    
-    # 如果 API 失敗，嘗試直接用 yfinance 檢查 (針對純數字輸入)
-    if query.isdigit():
-        symbol = f"{query}.TW"
-        try:
-            t = yf.Ticker(symbol)
-            # 簡單檢查
-            if not t.history(period='1d').empty:
-                return symbol, f"自選股-{query}"
-        except:
-            pass
             
     return None, None
 
@@ -176,7 +215,7 @@ def make_sparkline(data):
     color = "#dc3545" if data[-1] > data[0] else "#28a745"
     return f'<svg width="{width}" height="{height}" style="overflow:visible"><polyline points="{" ".join(points)}" fill="none" stroke="{color}" stroke-width="2"/><circle cx="{points[-1].split(",")[0]}" cy="{points[-1].split(",")[1]}" r="3" fill="{color}"/></svg>'
 
-# --- 5. 介面與新增功能 ---
+# --- 5. 介面 ---
 st.title("🚀 台股 AI 飆股神探")
 
 with st.container():
@@ -186,12 +225,12 @@ with st.container():
         with st.form(key='add_stock_form', clear_on_submit=True):
             col_input, col_btn = st.columns([3, 1])
             with col_input: 
-                search_query = st.text_input("新增監控", placeholder="輸入：1616 或 億泰")
+                search_query = st.text_input("新增監控", placeholder="輸入代號 (1616) 或名稱 (台新金)")
             with col_btn: 
                 submitted = st.form_submit_button("搜尋加入")
             
             if submitted and search_query:
-                # 呼叫智慧搜尋
+                # 呼叫更強大的搜尋功能
                 symbol, name = smart_search_stock(search_query)
                 
                 if symbol:
@@ -206,7 +245,7 @@ with st.container():
                     st.error(f"找不到「{search_query}」，請確認名稱或代號。")
 
     with col_info:
-        st.info("💡 **智慧搜尋**：支援輸入 **中文名稱** (如：億泰) 或 **代號** (如：1616)。")
+        st.info("💡 **強大搜尋**：現在輸入 **「1616」** 會顯示「億泰」，輸入 **「台新金」** 會找到「2887」。")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
@@ -223,7 +262,6 @@ html_content = """
     th { background: #f2f2f2; padding: 12px; text-align: left; position: sticky; top: 0; z-index: 10; border-bottom: 2px solid #ddd; }
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
     
-    /* 修正圖層問題 */
     tr { position: relative; z-index: 1; }
     tr:hover { background: #f8f9fa; z-index: 100; position: relative; }
     
@@ -234,7 +272,6 @@ html_content = """
     .tooltip-container { position: relative; display: inline-block; cursor: help; padding: 5px 10px; border-radius: 20px; font-weight: bold; font-size: 13px; transition: all 0.2s; }
     .tooltip-container:hover { transform: scale(1.05); }
     
-    /* 加大提示框與優化排版 */
     .tooltip-text { 
         visibility: hidden; width: 350px; background-color: #2c3e50; color: #fff; 
         text-align: left; border-radius: 8px; padding: 15px; position: absolute; z-index: 9999; 
@@ -245,7 +282,6 @@ html_content = """
     .tooltip-text::after { content: ""; position: absolute; top: 100%; left: 50%; margin-left: -6px; border-width: 6px; border-style: solid; border-color: #2c3e50 transparent transparent transparent; }
     .tooltip-container:hover .tooltip-text { visibility: visible; opacity: 1; }
 
-    /* 前三列向下顯示 */
     tr:nth-child(-n+3) .tooltip-text { bottom: auto; top: 140%; }
     tr:nth-child(-n+3) .tooltip-text::after { top: auto; bottom: 100%; border-color: transparent transparent #2c3e50 transparent; }
 
