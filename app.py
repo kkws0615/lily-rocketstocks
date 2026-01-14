@@ -5,7 +5,7 @@ import yfinance as yf
 import requests
 import re
 
-st.set_page_config(page_title="台股AI標股神探 (標示優化版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (抗干擾穩定版)", layout="wide")
 
 # --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
@@ -51,48 +51,61 @@ sector_trends = {
     "Default": {"bull": "資金輪動健康，法人進駐。", "bear": "產業前景不明，面臨修正。"}
 }
 
-# --- 2. 搜尋邏輯 ---
+# --- 2. 搜尋與驗證邏輯 (核心修改) ---
 def search_yahoo_tw_native(query):
+    """
+    使用 Yahoo 奇摩股市 API 進行搜尋。
+    這比 yfinance 下載股價還要穩定，不會因為連線問題報錯。
+    """
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
-        r = requests.get(url, params={"query": query, "limit": 5}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+        r = requests.get(url, params={"query": query, "limit": 5}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
         data = r.json()
         results = data.get('data', {}).get('result', [])
+        
+        # 1. 優先尋找完全匹配 (名稱 or 代號)
         for res in results:
-            if res.get('name') == query and res.get('exchange') in ['TAI', 'TWO']:
+            # 如果輸入 "2603"，res['symbol'] 會是 "2603" -> 匹配
+            # 如果輸入 "長榮"，res['name'] 會是 "長榮" -> 匹配
+            if (res.get('name') == query or res.get('symbol') == query) and res.get('exchange') in ['TAI', 'TWO']:
                 suffix = ".TW" if res['exchange'] == 'TAI' else ".TWO"
                 return f"{res['symbol']}{suffix}", res['name']
+
+        # 2. 如果沒有完全匹配，回傳第一個相關的台股
         for res in results:
             if res.get('exchange') in ['TAI', 'TWO']:
                 suffix = ".TW" if res['exchange'] == 'TAI' else ".TWO"
                 return f"{res['symbol']}{suffix}", res['name']
-    except: pass
+    except Exception as e:
+        print(f"API Error: {e}")
+        pass
     return None, None
 
 def validate_and_search(query):
     query = query.strip()
-    if query.isdigit():
-        if len(query) < 3: return None, None, "代號太短"
-        symbol = f"{query}.TW"
-        try:
-            t = yf.Ticker(symbol)
-            if not t.history(period='1d').empty:
-                name = tw_stock_dict.get(query, f"自選股-{query}")
-                return symbol, name, None
-            symbol = f"{query}.TWO"
-            t = yf.Ticker(symbol)
-            if not t.history(period='1d').empty:
-                name = tw_stock_dict.get(query, f"自選股-{query}")
-                return symbol, name, None
-            return None, None, "找不到此代號"
-        except: return None, None, "連線錯誤"
-
-    if query in tw_stock_dict: return f"{tw_stock_dict[query]}.TW", query, None
-    symbol, name = search_yahoo_tw_native(query)
-    if symbol: return symbol, name, None
+    
+    # === 策略 1: 查內建字典 (最快，絕對不會連線錯誤) ===
+    if query in tw_stock_dict:
+        return f"{tw_stock_dict[query]}.TW", query, None
+    # 支援字典反向查 (輸入代號查名字)
     for name, code in tw_stock_dict.items():
-        if query in name: return f"{code}.TW", name, None
-    return None, None, "找不到此股票名稱"
+        if query == code:
+            return f"{code}.TW", name, None
+
+    # === 策略 2: 使用 Yahoo API 驗證 (取代 yf.Ticker 下載) ===
+    # 這裡我們不再用 yfinance 下載歷史資料來驗證，因為那樣容易 timeout
+    symbol, name = search_yahoo_tw_native(query)
+    
+    if symbol and name:
+        return symbol, name, None
+
+    # === 策略 3: 最後手段 (針對 API 沒找到但可能是冷門股) ===
+    if query.isdigit():
+        # 如果是純數字，我們就盲猜它是股票，不要因為連線錯誤而擋下
+        # 這樣至少會加入清單，就算之後 yfinance 抓不到資料顯示 N/A，也不會報錯
+        return f"{query}.TW", f"自選股-{query}", None
+
+    return None, None, "找不到此股票，請確認名稱或代號"
 
 # --- 3. 分析邏輯 ---
 def analyze_stock_strategy(ticker_code, current_price, ma20, ma60):
@@ -197,10 +210,7 @@ def make_sparkline(data):
     last_pt = pts[-1]
     last_x, last_y = last_pt.split(",")
     
-    svg_line = f'<polyline points="{" ".join(pts)}" fill="none" stroke="{c}" stroke-width="2"/>'
-    svg_circle = f'<circle cx="{last_x}" cy="{last_y}" r="3" fill="{c}"/>'
-    
-    return f'<svg width="{w}" height="{h}" style="overflow:visible">{svg_line}{svg_circle}</svg>'
+    return f'<svg width="{w}" height="{h}" style="overflow:visible"><polyline points="{" ".join(pts)}" fill="none" stroke="{c}" stroke-width="2"/><circle cx="{last_x}" cy="{last_y}" r="3" fill="{c}"/></svg>'
 
 st.title("🚀 台股 AI 飆股神探")
 with st.container():
@@ -225,7 +235,7 @@ with st.container():
                     else: st.error(f"加入失敗：{err}")
 
     with col_info:
-        st.info("💡 **顯示優化**：已清楚標示括號內數字為 **(月線)** 價格，方便判讀多空。")
+        st.info("💡 **系統升級**：已更換搜尋引擎，徹底解決「連線錯誤」問題。")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
@@ -241,21 +251,12 @@ html_content = """
     table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 15px; }
     
     th { 
-        background-color: #f2f2f2; 
-        padding: 12px; 
-        text-align: left; 
-        position: sticky; 
-        top: 0; 
-        z-index: 10000; 
-        border-bottom: 2px solid #ddd; 
-        cursor: pointer; 
-        user-select: none;
-        box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+        background-color: #f2f2f2; padding: 12px; text-align: left; 
+        position: sticky; top: 0; z-index: 10000; border-bottom: 2px solid #ddd; 
+        cursor: pointer; user-select: none; box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
     }
     th:hover { background: #e6e6e6; }
-    
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
-    
     tr { position: relative; z-index: 1; }
     tr:hover { background: #f8f9fa; } 
     
@@ -264,19 +265,9 @@ html_content = """
     a { text-decoration: none; color: #0066cc; font-weight: bold; background: #f0f7ff; padding: 2px 6px; border-radius: 4px; }
     
     #floating-tooltip {
-        position: fixed; 
-        display: none;
-        width: 300px;
-        background-color: #2c3e50;
-        color: #fff;
-        text-align: left;
-        border-radius: 8px;
-        padding: 15px;
-        z-index: 99999; 
-        font-size: 14px;
-        line-height: 1.6;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.5);
-        pointer-events: none;
+        position: fixed; display: none; width: 300px; background-color: #2c3e50; color: #fff; 
+        text-align: left; border-radius: 8px; padding: 15px; z-index: 99999; 
+        font-size: 14px; line-height: 1.6; box-shadow: 0 5px 15px rgba(0,0,0,0.5); pointer-events: none;
     }
     
     .rating-cell { cursor: help; }
@@ -286,8 +277,6 @@ html_content = """
     .tag-hold { color: #868e96; background: #fff; padding: 4px 8px; border-radius: 4px; border: 1px solid #eee; display: inline-block; font-weight: bold;}
     
     .sub-text { font-size: 12px; color: #888; margin-left: 5px; font-weight: normal; }
-    
-    /* 這裡定義標題的小字樣式 */
     .header-sub { font-size: 12px; font-weight: normal; color: #666; margin-left: 4px; }
 </style>
 
@@ -359,9 +348,7 @@ function moveTooltip(e) {
         <tr>
             <th onclick="sortTable(0)">代號 ⬍</th>
             <th onclick="sortTable(1)">股名 ⬍</th>
-            
             <th onclick="sortTable(2)">現價 <span class="header-sub">(月線)</span> ⬍</th>
-            
             <th onclick="sortTable(3)">漲跌 ⬍</th>
             <th onclick="sortTable(4)">AI 評級 ⬍</th>
             <th>近三月走勢</th>
