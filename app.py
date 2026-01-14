@@ -5,7 +5,7 @@ import yfinance as yf
 import numpy as np
 import random
 
-st.set_page_config(page_title="台股AI標股神探 (修正優化版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (中文修正版)", layout="wide")
 
 # --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
@@ -20,7 +20,6 @@ if 'watch_list' not in st.session_state:
         "2002.TW": "中鋼",   "2891.TW": "中信金"
     }
 
-# 新增：紀錄最後加入的股票代號，用來強制置頂
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
@@ -107,8 +106,7 @@ def process_stock_data():
                 clean_code, current_price, ma20, ma60, closes_list[-10:]
             )
             
-            # === 置頂邏輯 ===
-            # 如果這檔是最後加入的 (last_added)，給它一個超高的分數加成，讓它排第一
+            # 置頂邏輯
             is_new = (ticker == st.session_state.last_added)
             final_sort_key = 9999 if is_new else score 
 
@@ -116,7 +114,7 @@ def process_stock_data():
                 "code": clean_code, "name": current_map[ticker],
                 "url": f"https://tw.stock.yahoo.com/quote/{ticker}",
                 "price": current_price, "change": daily_change_pct, 
-                "score": final_sort_key, # 用這個排序
+                "score": final_sort_key,
                 "ma20": ma20, "rating": rating, "rating_class": color_class,
                 "reason": reason, "trend": closes_list[-30:]
             })
@@ -143,44 +141,56 @@ st.title("🚀 台股 AI 飆股神探")
 with st.container():
     col_add, col_info = st.columns([2, 3])
     with col_add:
-        # 使用 form 防止 enter 自動重整造成的邏輯錯誤
         with st.form(key='add_stock_form', clear_on_submit=True):
             col_input, col_btn = st.columns([3, 1])
-            with col_input: new_ticker = st.text_input("輸入代號", placeholder="輸入代號 (如 1616)")
-            with col_btn: submitted = st.form_submit_button("新增")
+            with col_input: 
+                # === 介面修改提示 ===
+                new_ticker_input = st.text_input("輸入代號與名稱", placeholder="範例：1616 億泰 (自動命名) 或 1616")
+            with col_btn: 
+                submitted = st.form_submit_button("新增")
             
-            if submitted and new_ticker:
-                full_ticker = f"{new_ticker}.TW"
+            if submitted and new_ticker_input:
+                # === 關鍵邏輯修改：解析輸入 ===
+                # 如果使用者輸入 "1616 億泰"，我們就直接用 "億泰"
+                # 如果使用者只輸入 "1616"，我們才去抓 (可能會抓到英文)
                 
-                # 檢查是否已存在
-                if full_ticker in st.session_state.watch_list:
-                     st.warning(f"{new_ticker} 已經在清單中了！")
+                parts = new_ticker_input.strip().split()
+                stock_code = parts[0]
+                custom_name = parts[1] if len(parts) > 1 else None # 如果有第二部分，那就是名字
+                
+                if not stock_code.isdigit():
+                    st.error("代號必須是數字！")
                 else:
-                    # 嘗試抓取資料
-                    try:
-                        ticker_obj = yf.Ticker(full_ticker)
-                        # 檢查是否有歷史股價 (驗證代號是否正確)
-                        hist = ticker_obj.history(period='5d')
-                        
-                        if not hist.empty:
-                            # 1. 抓取正確名稱 (嘗試 longName -> shortName -> 代號)
-                            stock_name = ticker_obj.info.get('longName', None)
-                            if stock_name is None:
-                                stock_name = ticker_obj.info.get('shortName', new_ticker)
+                    full_ticker = f"{stock_code}.TW"
+                    
+                    if full_ticker in st.session_state.watch_list:
+                         st.warning(f"{stock_code} 已經在清單中了！")
+                    else:
+                        try:
+                            # 先檢查是否存在
+                            ticker_obj = yf.Ticker(full_ticker)
+                            hist = ticker_obj.history(period='5d')
                             
-                            # 2. 更新 Session State
-                            st.session_state.watch_list[full_ticker] = stock_name
-                            st.session_state.last_added = full_ticker # 設定為最新加入
-                            
-                            st.success(f"成功加入：{new_ticker} {stock_name}")
-                            st.rerun() # 強制刷新，避免跑到下方的 except
-                        else:
-                            st.error(f"找不到代號 {new_ticker}，請確認是否正確。")
-                    except Exception as e:
-                        st.error(f"連線或代號錯誤，請稍後再試。")
+                            if not hist.empty:
+                                # 決定顯示名稱
+                                if custom_name:
+                                    final_name = custom_name # 使用者自己輸入的中文
+                                else:
+                                    # 嘗試抓取，抓不到就用代號
+                                    final_name = ticker_obj.info.get('longName', f"自選股-{stock_code}")
+                                
+                                st.session_state.watch_list[full_ticker] = final_name
+                                st.session_state.last_added = full_ticker
+                                
+                                st.success(f"成功加入：{stock_code} {final_name}")
+                                st.rerun()
+                            else:
+                                st.error(f"找不到代號 {stock_code}，請確認。")
+                        except Exception as e:
+                            st.error(f"連線錯誤，請稍後再試。")
 
     with col_info:
-        st.info("💡 **最新功能**：新加入的股票會自動置頂顯示，並嘗試抓取公司全名。")
+        st.info("💡 **小撇步**：為了避免抓到英文名，建議輸入 **「代號+空格+中文名」** (如 `1616 億泰`)，系統會直接使用你輸入的名字！")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
