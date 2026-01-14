@@ -5,7 +5,7 @@ import yfinance as yf
 import requests
 import re
 
-st.set_page_config(page_title="台股AI標股神探 (容錯顯示版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (CSS重構版)", layout="wide")
 
 # --- 0. 初始化 ---
 if 'watch_list' not in st.session_state:
@@ -41,7 +41,7 @@ tw_stock_dict = {
     "奇鋐": "3017", "雙鴻": "3324", "士電": "1503", "中興電": "1513", "亞力": "1514",
     "東元": "1504", "大同": "2371", "億泰": "1616", "大亞": "1609", "宏達電": "2498",
     "友達": "2409", "群創": "3481", "聯成": "1313", "康舒": "6282", "鴻輝": "7769",
-    "泰山": "1212"
+    "泰山": "1218"
 }
 
 ticker_sector_map = {"2330": "Semi", "2603": "Ship", "2618": "Trans"} 
@@ -52,41 +52,32 @@ sector_trends = {
     "Default": {"bull": "資金輪動健康，法人進駐。", "bear": "產業前景不明，面臨修正。"}
 }
 
-# --- 2. 搜尋邏輯 ---
+# --- 2. 搜尋與驗證邏輯 ---
 def search_yahoo_tw_native(query):
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
-        r = requests.get(url, params={"query": query, "limit": 5}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+        r = requests.get(url, params={"query": query, "limit": 5}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
         data = r.json()
         results = data.get('data', {}).get('result', [])
         for res in results:
-            if res.get('name') == query and res.get('exchange') in ['TAI', 'TWO']:
+            if (res.get('name') == query or res.get('symbol') == query) and res.get('exchange') in ['TAI', 'TWO']:
                 suffix = ".TW" if res['exchange'] == 'TAI' else ".TWO"
                 return f"{res['symbol']}{suffix}", res['name']
         for res in results:
             if res.get('exchange') in ['TAI', 'TWO']:
                 suffix = ".TW" if res['exchange'] == 'TAI' else ".TWO"
                 return f"{res['symbol']}{suffix}", res['name']
-    except: pass
+    except Exception as e: pass
     return None, None
 
 def validate_and_search(query):
     query = query.strip()
-    if query.isdigit():
-        if len(query) < 3: return None, None, "代號太短"
-        symbol = f"{query}.TW"
-        try:
-            # 不再這裡做歷史股價檢查，改為後端容錯
-            name = tw_stock_dict.get(query, f"自選股-{query}")
-            return symbol, name, None
-        except: return None, None, "連線錯誤"
-
     if query in tw_stock_dict: return f"{tw_stock_dict[query]}.TW", query, None
-    symbol, name = search_yahoo_tw_native(query)
-    if symbol: return symbol, name, None
     for name, code in tw_stock_dict.items():
-        if query in name: return f"{code}.TW", name, None
-    return None, None, "找不到此股票名稱"
+        if query == code: return f"{code}.TW", name, None
+    symbol, name = search_yahoo_tw_native(query)
+    if symbol and name: return symbol, name, None
+    return None, None, "查無此股，請確認代號或名稱是否正確。"
 
 # --- 3. 分析邏輯 ---
 def analyze_stock_strategy(ticker_code, current_price, ma20, ma60):
@@ -94,9 +85,6 @@ def analyze_stock_strategy(ticker_code, current_price, ma20, ma60):
     sort_order = 2 
     sector_key = ticker_sector_map.get(ticker_code, "Default")
     
-    if current_price is None:
-        return "N/A", "tag-sell", 0, "⚠️ <b>資料缺失：</b>無法取得即時報價，請稍後再試。", 0
-
     if ma60 is None:
         if ma20 and current_price > ma20: 
             return "短多", "tag-buy", 60, f"🚀 <b>新股：</b>站上月線({ma20:.1f})，動能強。<br>⚠️ 波動大注意風險。", 3
@@ -139,14 +127,12 @@ def process_stock_data():
         data_download = fetch_stock_data_wrapper(tickers)
     
     rows = []
-    # 即使沒有下載到資料，也不要直接 return，嘗試處理個別股票
     
     for ticker in tickers:
         clean_code = ticker.replace(".TW", "").replace(".TWO", "")
         stock_name = current_map.get(ticker, ticker)
         
         try:
-            # 處理資料
             if len(tickers) == 1: df_stock = data_download
             else: df_stock = data_download[ticker] if data_download is not None else pd.DataFrame()
             
@@ -154,22 +140,18 @@ def process_stock_data():
             if isinstance(closes, pd.DataFrame): closes = closes.iloc[:, 0]
             closes_list = closes.dropna().tolist()
             
-            # === 關鍵修改：處理資料不足的情況 ===
             if len(closes_list) < 1:
-                # 抓不到資料時，填入 N/A，確保它會顯示在列表上
                 is_new = (ticker == st.session_state.last_added)
-                sort_key = 9999 if is_new else 0 # 沒資料排最後(除非剛加入)
-                
+                sort_key = 9999 if is_new else 0
                 rows.append({
                     "code": clean_code, "name": stock_name,
                     "url": f"https://tw.stock.yahoo.com/quote/{ticker}",
                     "price": 0, "change": 0, "score": sort_key, "sort_order": 0,
                     "ma20_disp": "-", "rating": "資料N/A", "rating_class": "tag-sell",
-                    "reason": "⚠️ API 暫無此股數據，請稍後重整。", "trend": []
+                    "reason": "⚠️ API 暫無數據，但代號正確。", "trend": []
                 })
                 continue
             
-            # 正常計算
             current_price = closes_list[-1]
             prev_price = closes_list[-2] if len(closes_list) > 1 else current_price
             change_pct = ((current_price - prev_price) / prev_price) * 100
@@ -194,13 +176,12 @@ def process_stock_data():
                 "trend": closes_list[-30:]
             })
         except Exception as e:
-            # 發生任何錯誤，也填入錯誤列
             rows.append({
                 "code": clean_code, "name": stock_name,
                 "url": f"https://tw.stock.yahoo.com/quote/{ticker}",
                 "price": 0, "change": 0, "score": 0, "sort_order": 0,
                 "ma20_disp": "-", "rating": "讀取錯誤", "rating_class": "tag-sell",
-                "reason": f"系統錯誤: {str(e)}", "trend": []
+                "reason": f"錯誤: {str(e)}", "trend": []
             })
             continue
     
@@ -211,7 +192,7 @@ def make_sparkline(data):
     if not data or len(data) < 2: return '<span style="color:#ccc;font-size:12px">無走勢圖</span>'
     w, h = 100, 30
     min_v, max_v = min(data), max(data)
-    if max_v == min_v: return "" # 直線不畫
+    if max_v == min_v: return ""
     
     pts = []
     for i, val in enumerate(data):
@@ -245,10 +226,10 @@ with st.container():
                             st.session_state.last_added = symbol
                             st.success(f"已加入：{name}")
                             st.rerun()
-                    else: st.error(f"加入失敗：{err}")
+                    else: st.error(f"❌ {err}")
 
     with col_info:
-        st.info("💡 **容錯升級**：即使 API 暫時抓不到資料，加入的股票也會顯示在列表中 (顯示 N/A)。")
+        st.info("💡 **完美介面**：已清除所有 CSS 衝突。現在「強力推薦」標籤不會再擋住標題了。")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
@@ -263,21 +244,37 @@ html_content = """
     body { font-family: "Microsoft JhengHei", sans-serif; margin: 0; padding-bottom: 50px; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 15px; }
     
+    /* === 標題列：權重高，不透明 === */
     th { 
-        background-color: #f2f2f2; padding: 12px; text-align: left; 
-        position: sticky; top: 0; z-index: 10000; border-bottom: 2px solid #ddd; 
-        cursor: pointer; user-select: none; box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+        background-color: #f2f2f2; 
+        padding: 12px; 
+        text-align: left; 
+        position: sticky; 
+        top: 0; 
+        z-index: 100; /* 這裡設 100 就夠了，因為下面內容我們不設 z-index */
+        border-bottom: 2px solid #ddd; 
+        cursor: pointer; 
+        user-select: none;
+        box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
     }
     th:hover { background: #e6e6e6; }
     
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
-    tr { position: relative; z-index: 1; }
-    tr:hover { background: #f8f9fa; } 
+    
+    /* === 內容列：移除所有 z-index 與 position，回歸平民 === */
+    tr { 
+        /* 不設定 position: relative，讓它維持預設 */
+    }
+    tr:hover { 
+        background: #f8f9fa; 
+        /* 不設定 z-index，避免浮起來蓋住標題 */
+    } 
     
     .up { color: #d62728; font-weight: bold; }
     .down { color: #2ca02c; font-weight: bold; }
     a { text-decoration: none; color: #0066cc; font-weight: bold; background: #f0f7ff; padding: 2px 6px; border-radius: 4px; }
     
+    /* === 懸浮視窗：權重最高 === */
     #floating-tooltip {
         position: fixed; display: none; width: 300px; background-color: #2c3e50; color: #fff; 
         text-align: left; border-radius: 8px; padding: 15px; z-index: 99999; 
@@ -374,7 +371,6 @@ function moveTooltip(e) {
 for row in data_rows:
     p_cls = "up" if row['change'] > 0 else "down"
     
-    # 處理特殊情況的顯示
     if row['rating'] == "資料N/A" or row['rating'] == "讀取錯誤":
         price_display = "N/A"
         change_display = "-"
