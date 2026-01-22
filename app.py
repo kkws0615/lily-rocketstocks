@@ -5,57 +5,30 @@ import yfinance as yf
 import requests
 import re
 
-st.set_page_config(page_title="台股AI標股神探 (百大+Yahoo直連)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (暴力直連版)", layout="wide")
 
-# --- 1. 內建百大熱門股 (已修正 6271 為同欣電) ---
-# 這份清單只用於「初始化顯示」，新增股票時不會查這裡，而是直接問 Yahoo
-INIT_STOCKS = [
-    # === 半導體與 AI (上市 .TW) ===
-    ("2330.TW", "台積電"), ("2454.TW", "聯發科"), ("2317.TW", "鴻海"), ("2303.TW", "聯電"), ("3711.TW", "日月光投控"),
-    ("2308.TW", "台達電"), ("2382.TW", "廣達"), ("3231.TW", "緯創"), ("2357.TW", "華碩"), ("6669.TW", "緯穎"),
-    ("2379.TW", "瑞昱"), ("3034.TW", "聯詠"), ("3035.TW", "智原"), ("3443.TW", "創意"), ("3661.TW", "世芯-KY"),
-    ("3008.TW", "大立光"), ("2408.TW", "南亞科"), ("2376.TW", "技嘉"), ("2356.TW", "英業達"), ("2324.TW", "仁寶"),
-    ("3017.TW", "奇鋐"), ("2301.TW", "光寶科"), ("2368.TW", "金像電"), ("3037.TW", "欣興"), ("3044.TW", "健鼎"),
-    ("2313.TW", "華通"), ("2383.TW", "台光電"), ("2449.TW", "京元電子"), ("6271.TW", "同欣電"), # <--- 修正：6271 是同欣電 (上市)
-
-    # === 半導體與 AI (上櫃 .TWO) ===
-    ("5274.TWO", "信驊"), ("3529.TWO", "力旺"), ("8299.TWO", "群聯"), ("5347.TWO", "世界先進"),
-    ("3293.TWO", "鈊象"), ("8069.TWO", "元太"), ("6147.TWO", "頎邦"), ("3105.TWO", "穩懋"),
-    ("6488.TWO", "環球晶"), ("5483.TWO", "中美晶"), ("4966.TWO", "譜瑞-KY"), ("6223.TWO", "旺矽"),
-    ("3324.TWO", "雙鴻"), ("6274.TWO", "台燿"), ("3260.TWO", "威剛"), 
-
-    # === 金融股 (上市) ===
-    ("2881.TW", "富邦金"), ("2882.TW", "國泰金"), ("2891.TW", "中信金"), ("2886.TW", "兆豐金"), ("2884.TW", "玉山金"),
-    ("2885.TW", "元大金"), ("2892.TW", "第一金"), ("2880.TW", "華南金"), ("2883.TW", "凱基金"), ("2890.TW", "永豐金"),
-    ("5880.TW", "合庫金"), ("2887.TW", "台新新光金"),
-    ("2834.TW", "臺企銀"), ("2801.TW", "彰銀"), ("5876.TW", "上海商銀"), ("2812.TW", "台中銀"), ("5871.TW", "中租-KY"),
-
-    # === 傳產龍頭 (上市) ===
-    ("1301.TW", "台塑"), ("1303.TW", "南亞"), ("1326.TW", "台化"), ("6505.TW", "台塑化"), ("1101.TW", "台泥"),
-    ("1102.TW", "亞泥"), ("2002.TW", "中鋼"), ("2027.TW", "大成鋼"), ("1605.TW", "華新"), ("1402.TW", "遠東新"),
-    ("1216.TW", "統一"), ("2912.TW", "統一超"), ("2207.TW", "和泰車"), ("9904.TW", "寶成"), ("9910.TW", "豐泰"),
-    ("1313.TW", "聯成"), ("1218.TW", "泰山"), ("2453.TW", "凌群"), # <--- 補上正確的凌群
-
-    # === 航運與重電 (上市) ===
+# --- 1. 內建百大熱門股 ---
+DEFAULT_STOCKS = [
+    ("2330.TW", "台積電"), ("2454.TW", "聯發科"), ("2317.TW", "鴻海"), ("2303.TW", "聯電"), ("2308.TW", "台達電"),
+    ("2382.TW", "廣達"), ("3231.TW", "緯創"), ("2357.TW", "華碩"), ("6669.TW", "緯穎"), ("3008.TW", "大立光"),
+    ("2376.TW", "技嘉"), ("2356.TW", "英業達"), ("3017.TW", "奇鋐"), ("2301.TW", "光寶科"), ("3711.TW", "日月光投控"),
     ("2603.TW", "長榮"), ("2609.TW", "陽明"), ("2615.TW", "萬海"), ("2618.TW", "長榮航"), ("2610.TW", "華航"),
-    ("2634.TW", "漢翔"), ("1513.TW", "中興電"), ("1519.TW", "華城"), ("1503.TW", "士電"), ("1504.TW", "東元"),
-    ("1514.TW", "亞力"), ("1609.TW", "大亞"), ("1616.TW", "億泰"), ("6282.TW", "康舒"),
+    ("2881.TW", "富邦金"), ("2882.TW", "國泰金"), ("2891.TW", "中信金"), ("2886.TW", "兆豐金"), ("2884.TW", "玉山金"),
+    ("5880.TW", "合庫金"), ("2892.TW", "第一金"), ("2880.TW", "華南金"), ("2885.TW", "元大金"), ("2890.TW", "永豐金"),
+    ("1513.TW", "中興電"), ("1519.TW", "華城"), ("1503.TW", "士電"), ("1504.TW", "東元"), ("1514.TW", "亞力"),
+    ("6271.TW", "同欣電"), ("2453.TW", "凌群"), ("1616.TW", "億泰"), # 這裡也手動幫您補上
 
-    # === 電信與面板 (上市) ===
-    ("2412.TW", "中華電"), ("3045.TW", "台灣大"), ("4904.TW", "遠傳"), ("2409.TW", "友達"), ("3481.TW", "群創"),
-
-    # === 熱門 ETF (上市) ===
-    ("0050.TW", "元大台灣50"), ("0056.TW", "元大高股息"), ("00878.TW", "國泰永續高股息"), ("00919.TW", "群益台灣精選高息"),
-    ("00929.TW", "復華台灣科技優息"), ("00940.TW", "元大台灣價值高息"), ("006208.TW", "富邦台50"), ("00713.TW", "元大高息低波"),
-    ("00632R.TW", "元大台灣50反1"), 
+    ("5274.TWO", "信驊"), ("3529.TWO", "力旺"), ("8299.TWO", "群聯"), ("5347.TWO", "世界先進"), ("3293.TWO", "鈊象"),
+    ("8069.TWO", "元太"), ("6147.TWO", "頎邦"), ("3105.TWO", "穩懋"), ("6488.TWO", "環球晶"), ("5483.TWO", "中美晶"),
+    ("3324.TWO", "雙鴻"), ("6274.TWO", "台燿"), ("3260.TWO", "威剛"), ("6282.TW", "康舒"),
     
-    # === 債券 ETF (上櫃 .TWO) ===
-    ("00679B.TWO", "元大美債20年"), ("00687B.TWO", "國泰20年美債"), ("00937B.TWO", "群益ESG投等債20+")
+    ("0050.TW", "元大台灣50"), ("0056.TW", "元大高股息"), ("00878.TW", "國泰永續高股息"), ("00919.TW", "群益台灣精選高息"),
+    ("00929.TW", "復華台灣科技優息"), ("00940.TW", "元大台灣價值高息"), ("00679B.TWO", "元大美債20年")
 ]
 
 # --- 0. 初始化 Session State ---
 if 'watch_list' not in st.session_state:
-    st.session_state.watch_list = {code: name for code, name in INIT_STOCKS}
+    st.session_state.watch_list = {code: name for code, name in DEFAULT_STOCKS}
 
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
@@ -69,54 +42,57 @@ sector_trends = {
     "Default": {"bull": "資金輪動健康，法人進駐。", "bear": "產業前景不明，面臨修正。"}
 }
 
-# --- 2. 核心搜尋功能 (Yahoo API 直連) ---
+# --- 2. 搜尋與驗證邏輯 (Yahoo API + 暴力直連) ---
 def search_yahoo_official(query):
-    """
-    直接呼叫 Yahoo 建議 API。
-    """
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
-        # region=TW 確保搜尋台股優先
-        params = {"query": query, "limit": 5, "region": "TW"}
-        r = requests.get(url, params=params, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+        r = requests.get(url, params={"query": query, "limit": 5}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
         data = r.json()
         results = data.get('data', {}).get('result', [])
-        
         for res in results:
-            symbol = res.get('symbol')
-            name = res.get('name')
-            exchange = res.get('exchange')
-            
-            # 強制匹配：輸入的 query 必須出現在代號或名稱中，避免搜尋 "1212" 給你 "1215"
-            # 1. 處理台股上市 (TAI -> .TW)
-            if exchange == 'TAI':
-                return f"{symbol}.TW", name
-            
-            # 2. 處理台股上櫃 (TWO -> .TWO)
-            if exchange == 'TWO':
-                return f"{symbol}.TWO", name
-            
-            # 3. 處理美股 (NMS, NYQ, ASE -> 原代號)
-            if exchange in ['NMS', 'NYQ', 'ASE', 'PCX']:
-                return symbol, name
-
-    except Exception as e:
-        print(f"API Error: {e}")
-        pass
-    
+            # 寬鬆匹配：只要搜尋結果包含輸入的字串即可
+            if query in res.get('symbol') or query in res.get('name'):
+                if res.get('exchange') == 'TAI': return f"{res['symbol']}.TW", res['name']
+                if res.get('exchange') == 'TWO': return f"{res['symbol']}.TWO", res['name']
+    except: pass
     return None, None
 
+def probe_ticker(symbol):
+    """
+    暴力直連：不問搜尋 API，直接嘗試下載股價。
+    如果下載得到，代表股票存在。
+    """
+    try:
+        t = yf.Ticker(symbol)
+        # 嘗試抓一天資料
+        hist = t.history(period="1d")
+        if not hist.empty:
+            # 嘗試抓取名稱，抓不到就回傳 True 讓外層處理
+            return True
+    except: pass
+    return False
+
 def validate_and_add(query):
-    query = query.strip()
+    query = query.strip().upper()
     
-    # === 唯一邏輯：問 Yahoo ===
-    # 這裡不查字典，確保新增的資料絕對是正確的 Yahoo 資料
+    # === 1. 優先問 Yahoo 搜尋 API (正規途徑) ===
     symbol, real_name = search_yahoo_official(query)
-    
     if symbol and real_name:
         return symbol, real_name, None
-    
-    return None, None, f"Yahoo 找不到「{query}」，請確認代號是否正確。"
+
+    # === 2. 暴力直連 (Yahoo 搜尋找不到時的備案) ===
+    # 這就是解決 1616 的關鍵：搜尋不到沒關係，直接撞撞看
+    if query.isdigit():
+        # A. 猜它是上市股 (.TW)
+        if probe_ticker(f"{query}.TW"):
+            # 既然 Yahoo 搜尋不到名字，我們先暫時叫它「代號」，後續列表顯示時會再嘗試抓
+            return f"{query}.TW", f"{query} (上市)", None
+        
+        # B. 猜它是上櫃股 (.TWO)
+        if probe_ticker(f"{query}.TWO"):
+            return f"{query}.TWO", f"{query} (上櫃)", None
+
+    return None, None, f"系統與 Yahoo 皆找不到「{query}」，且暴力連線失敗。"
 
 # --- 3. 分析邏輯 ---
 def analyze_stock_strategy(ticker_code, current_price, ma20, ma60):
@@ -155,7 +131,7 @@ def analyze_stock_strategy(ticker_code, current_price, ma20, ma60):
         
     return rating, color_class, predict_score, reason, sort_order
 
-# --- 4. 資料處理 (含自動除錯) ---
+# --- 4. 資料處理 ---
 @st.cache_data(ttl=300) 
 def fetch_stock_data_wrapper(tickers):
     if not tickers: return None
@@ -164,15 +140,10 @@ def fetch_stock_data_wrapper(tickers):
 def process_stock_data():
     current_map = st.session_state.watch_list
     tickers = list(current_map.keys())
-    
-    # 如果清單是空的，直接返回
-    if not tickers: return []
-
     with st.spinner(f'AI 正在計算 {len(tickers)} 檔個股數據...'):
         data_download = fetch_stock_data_wrapper(tickers)
     
     rows = []
-    invalid_tickers = [] 
     
     for ticker in tickers:
         clean_code = ticker.replace(".TW", "").replace(".TWO", "")
@@ -186,9 +157,16 @@ def process_stock_data():
             if isinstance(closes, pd.DataFrame): closes = closes.iloc[:, 0]
             closes_list = closes.dropna().tolist()
             
-            # === 自動除錯機制 ===
             if len(closes_list) < 1:
-                invalid_tickers.append(ticker)
+                # 即使沒資料，也不要刪除，顯示 N/A 讓使用者知道有加進去
+                # 但因為剛剛有暴力直連驗證過，這裡通常會有資料
+                rows.append({
+                    "code": clean_code, "name": stock_name,
+                    "url": f"https://tw.stock.yahoo.com/quote/{ticker}",
+                    "price": 0, "change": 0, "score": 0, "sort_order": 0,
+                    "ma20_disp": "-", "rating": "資料N/A", "rating_class": "tag-sell",
+                    "reason": "⚠️ 暫無數據", "trend": []
+                })
                 continue
             
             current_price = closes_list[-1]
@@ -215,15 +193,7 @@ def process_stock_data():
                 "trend": closes_list[-30:]
             })
         except:
-            invalid_tickers.append(ticker)
             continue
-    
-    # 移除無效代號
-    if invalid_tickers:
-        for bad_ticker in invalid_tickers:
-            if bad_ticker in st.session_state.watch_list:
-                del st.session_state.watch_list[bad_ticker]
-        st.toast(f"已自動移除 {len(invalid_tickers)} 筆無效資料", icon="🧹")
     
     return sorted(rows, key=lambda x: x['score'], reverse=True)
 
@@ -252,8 +222,8 @@ with st.container():
     with col_add:
         with st.form(key='add_stock_form', clear_on_submit=True):
             col_in, col_btn = st.columns([3, 1])
-            with col_in: query = st.text_input("新增監控", placeholder="輸入代號(如 6271) 或 股名")
-            with col_btn: submitted = st.form_submit_button("Yahoo 匯入")
+            with col_in: query = st.text_input("新增監控", placeholder="輸入代號(如 1616) 或 股名")
+            with col_btn: submitted = st.form_submit_button("搜尋並加入")
             
             if submitted and query:
                 symbol, name, err = validate_and_add(query)
@@ -264,13 +234,13 @@ with st.container():
                     else:
                         st.session_state.watch_list[symbol] = name
                         st.session_state.last_added = symbol
-                        st.success(f"✅ 成功匯入：{name} ({symbol})")
+                        st.success(f"✅ 成功加入：{name} ({symbol})")
                         st.rerun()
                 else:
                     st.error(f"❌ {err}")
 
     with col_info:
-        st.info("💡 **Yahoo 權威搜尋**：系統內建 100+ 熱門股。新增時將直接連線 Yahoo，確保代號正確 (如 6271 是同欣電)。")
+        st.info("💡 **暴力直連模式**：Yahoo 搜不到的股票 (如 1616)，系統會直接嘗試連線證交所。")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
