@@ -5,9 +5,9 @@ import yfinance as yf
 import requests
 import re
 
-st.set_page_config(page_title="台股AI標股神探 (百大+無限匯入版)", layout="wide")
+st.set_page_config(page_title="台股AI標股神探 (終極修正版)", layout="wide")
 
-# --- 1. 內建百大熱門股 (保留上個版本的豐富資料庫) ---
+# --- 1. 內建百大熱門股 (字典資料庫) ---
 INIT_STOCKS = [
     # === 半導體與 AI (上市 .TW) ===
     ("2330.TW", "台積電"), ("2454.TW", "聯發科"), ("2317.TW", "鴻海"), ("2303.TW", "聯電"), ("3711.TW", "日月光投控"),
@@ -52,6 +52,12 @@ INIT_STOCKS = [
     ("00679B.TWO", "元大美債20年"), ("00687B.TWO", "國泰20年美債"), ("00937B.TWO", "群益ESG投等債20+")
 ]
 
+# 建立快速查詢字典
+tw_stock_dict = {name: code for code, name in INIT_STOCKS}
+for code, name in INIT_STOCKS:
+    simple_code = code.split('.')[0]
+    tw_stock_dict[simple_code] = code 
+
 # --- 0. 初始化 Session State ---
 if 'watch_list' not in st.session_state:
     st.session_state.watch_list = {code: name for code, name in INIT_STOCKS}
@@ -59,7 +65,7 @@ if 'watch_list' not in st.session_state:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# 產業分類與趨勢
+# 產業分類
 ticker_sector_map = {"2330": "Semi", "2603": "Ship", "2618": "Trans"} 
 sector_trends = {
     "Semi": {"bull": "AI 晶片需求強勁。", "bear": "消費電子復甦慢。"},
@@ -68,50 +74,76 @@ sector_trends = {
     "Default": {"bull": "資金輪動健康，法人進駐。", "bear": "產業前景不明，面臨修正。"}
 }
 
-# --- 2. 核心功能：Yahoo 自動匯入 (新版邏輯) ---
+# --- 2. 搜尋與驗證邏輯 (三重保險機制) ---
+
+# A. 網頁爬蟲 (最後手段：抓取 Yahoo 網頁標題)
+def scrape_yahoo_title(symbol):
+    url = f"https://tw.stock.yahoo.com/quote/{symbol}"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        r = requests.get(url, headers=headers, timeout=3)
+        if r.status_code == 200:
+            match = re.search(r'<title>(.*?)\(', r.text)
+            if match:
+                return match.group(1).strip()
+    except: pass
+    return None
+
+# B. Yahoo API 搜尋
 def search_yahoo_and_get_name(query):
-    """
-    直接詢問 Yahoo 這個代號/名稱對應的正確股票資訊。
-    回傳：(完整代號, 正確股名)
-    """
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
         r = requests.get(url, params={"query": query, "limit": 5}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
         data = r.json()
         results = data.get('data', {}).get('result', [])
-        
         for res in results:
-            symbol = res.get('symbol')
-            name = res.get('name')
-            exchange = res.get('exchange')
-            
-            # 優先處理台股 (TAI=上市, TWO=上櫃)
-            if exchange == 'TAI':
-                return f"{symbol}.TW", name
-            elif exchange == 'TWO':
-                return f"{symbol}.TWO", name
-            
-            # 支援美股或其他市場 (選配)
-            if exchange in ['NMS', 'NYQ', 'ASE']:
-                return symbol, name
-
-    except Exception as e:
-        print(f"Yahoo API Error: {e}")
-        pass
+            if (res.get('name') == query or res.get('symbol') == query) and res.get('exchange') in ['TAI', 'TWO']:
+                suffix = ".TW" if res['exchange'] == 'TAI' else ".TWO"
+                return f"{res['symbol']}{suffix}", res['name']
+        for res in results:
+            if res.get('exchange') in ['TAI', 'TWO']:
+                suffix = ".TW" if res['exchange'] == 'TAI' else ".TWO"
+                return f"{res['symbol']}{suffix}", res['name']
+    except Exception as e: pass
     return None, None
 
+# C. 主驗證入口
 def validate_and_add(query):
     query = query.strip()
     
-    # 1. 使用 Yahoo API 進行權威搜尋 (不再依賴死板的字典)
+    # === 第一道防線：內建字典 (最快、最準) ===
+    # 這行保證 6271 直接命中，不會去問不穩定的 API
+    if query in tw_stock_dict:
+        full_code = tw_stock_dict[query]
+        # 取得正確名稱
+        name = query if not query.replace('.','').isdigit() else st.session_state.watch_list.get(full_code, "未知")
+        # 再次確認 session_state 裡有沒有這個名字，沒有的話從 INIT_STOCKS 找
+        if name == "未知":
+             for c, n in INIT_STOCKS:
+                 if c == full_code: name = n
+        return full_code, name, None
+
+    # 反向查找 (Input: 6271 -> 6271.TWO)
+    for name, code in tw_stock_dict.items():
+        if query == code.split('.')[0]: return code, name, None
+
+    # === 第二道防線：Yahoo API ===
     symbol, real_name = search_yahoo_and_get_name(query)
-    
     if symbol and real_name:
         return symbol, real_name, None
     
-    # 2. 容錯處理：如果輸入純數字但 API 沒回應，嘗試盲測 (避免 Yahoo 臨時怪怪的)
+    # === 第三道防線：爬蟲 (針對 API 失效但輸入正確代號的情況) ===
     if query.isdigit():
-        return f"{query}.TW", f"自選股-{query}", None
+        # 試試看上市
+        name = scrape_yahoo_title(f"{query}.TW")
+        if name: return f"{query}.TW", name, None
+        # 試試看上櫃
+        name = scrape_yahoo_title(f"{query}.TWO")
+        if name: return f"{query}.TWO", name, None
+        
+        # 真的沒辦法才顯示自選股 (但至少代號是對的)
+        # 這裡可以再擋一次，避免亂碼
+        # return f"{query}.TW", f"自選股-{query}", None 
 
     return None, None, f"Yahoo 找不到「{query}」，請確認名稱或代號。"
 
@@ -156,15 +188,12 @@ def analyze_stock_strategy(ticker_code, current_price, ma20, ma60):
 @st.cache_data(ttl=300) 
 def fetch_stock_data_wrapper(tickers):
     if not tickers: return None
-    # 一次下載所有股票資料，這需要一點時間但效率最高
     return yf.download(tickers, period="6mo", group_by='ticker', progress=False)
 
 def process_stock_data():
     current_map = st.session_state.watch_list
     tickers = list(current_map.keys())
-    
-    # 顯示進度提示
-    with st.spinner(f'AI 正在計算 {len(tickers)} 檔個股數據 (資料量大請稍候)...'):
+    with st.spinner(f'AI 正在計算 {len(tickers)} 檔個股數據...'):
         data_download = fetch_stock_data_wrapper(tickers)
     
     rows = []
@@ -181,7 +210,6 @@ def process_stock_data():
             if isinstance(closes, pd.DataFrame): closes = closes.iloc[:, 0]
             closes_list = closes.dropna().tolist()
             
-            # 容錯處理：如果抓不到資料，顯示 N/A
             if len(closes_list) < 1:
                 is_new = (ticker == st.session_state.last_added)
                 sort_key = 9999 if is_new else 0
@@ -255,10 +283,10 @@ with st.container():
         with st.form(key='add_stock_form', clear_on_submit=True):
             col_in, col_btn = st.columns([3, 1])
             with col_in: query = st.text_input("新增監控", placeholder="輸入：6271 或 凌群")
-            with col_btn: submitted = st.form_submit_button("Yahoo 匯入")
+            with col_btn: submitted = st.form_submit_button("新增")
             
             if submitted and query:
-                # 使用新版 Yahoo 匯入功能
+                # 呼叫三重驗證功能
                 symbol, name, err = validate_and_add(query)
                 
                 if symbol:
@@ -267,19 +295,19 @@ with st.container():
                     else:
                         st.session_state.watch_list[symbol] = name
                         st.session_state.last_added = symbol
-                        st.success(f"✅ 成功匯入：{name} ({symbol})")
+                        st.success(f"✅ 成功加入：{name} ({symbol})")
                         st.rerun()
                 else:
                     st.error(f"❌ {err}")
 
     with col_info:
-        st.info("💡 **功能整合**：已內建 100 檔熱門股，並支援 **Yahoo 自動匯入**。現在輸入 6271 會自動抓到正確名稱！")
+        st.info("💡 **完美搜尋**：內建 100+ 熱門股字典，並支援 Yahoo API 自動抓名與網頁爬蟲補位。6271 凌群可正確顯示！")
         filter_strong = st.checkbox("🔥 只看強力推薦", value=False)
 
 data_rows = process_stock_data()
 if filter_strong: data_rows = [d for d in data_rows if d['rating'] == "強力推薦"]
 
-# --- 6. HTML/JS 渲染 (JS Floating Tooltip) ---
+# --- 6. HTML/JS 渲染 ---
 html_content = """
 <!DOCTYPE html>
 <html>
@@ -288,7 +316,6 @@ html_content = """
     body { font-family: "Microsoft JhengHei", sans-serif; margin: 0; padding-bottom: 50px; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 15px; }
     
-    /* 1. 標題列：置頂且不透明 */
     th { 
         background-color: #f2f2f2; padding: 12px; text-align: left; 
         position: sticky; top: 0; z-index: 10000; border-bottom: 2px solid #ddd; 
@@ -296,8 +323,6 @@ html_content = """
     }
     th:hover { background: #e6e6e6; }
     td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
-    
-    /* 2. 內容列：無 z-index，避免遮擋標題 */
     tr { position: relative; }
     tr:hover { background: #f8f9fa; } 
     
@@ -305,7 +330,6 @@ html_content = """
     .down { color: #2ca02c; font-weight: bold; }
     a { text-decoration: none; color: #0066cc; font-weight: bold; background: #f0f7ff; padding: 2px 6px; border-radius: 4px; }
     
-    /* 3. 獨立懸浮視窗：z-index 最高 */
     #floating-tooltip {
         position: fixed; display: none; width: 300px; background-color: #2c3e50; color: #fff; 
         text-align: left; border-radius: 8px; padding: 15px; z-index: 99999; 
