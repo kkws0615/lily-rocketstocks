@@ -49,107 +49,116 @@ for code, name in DEFAULT_STOCKS:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 4. 大盤即時走勢圖 (Plotly 專業版：含 XY 軸與 MA) ---
-def render_taiex_realtime_chart():
+# --- 4. 大盤技術分析圖 (日/週/月 K線與多空均線) ---
+def render_taiex_ta_chart():
+    # 版面設定：左邊放數值與按鈕，右邊放切換按鈕
+    col_metric, col_controls = st.columns([1, 4])
+    
+    with col_controls:
+        # 使用 Radio button 作為週期選擇器
+        period_opt = st.radio("選擇週期", ["日線", "週線", "月線"], horizontal=True, label_visibility="collapsed")
+    
     with st.container():
         try:
-            # 抓取大盤 1 分鐘資料
-            df_intraday = yf.download("^TWII", period="1d", interval="1m", progress=False)
+            # 根據週期抓取足夠計算 MA240 的資料量
+            if period_opt == "日線":
+                df = yf.download("^TWII", period="2y", interval="1d", progress=False)
+            elif period_opt == "週線":
+                df = yf.download("^TWII", period="10y", interval="1wk", progress=False)
+            else: # 月線
+                df = yf.download("^TWII", period="20y", interval="1mo", progress=False)
             
-            if not df_intraday.empty:
-                closes = df_intraday['Close']
-                if isinstance(closes, pd.DataFrame):
-                    closes = closes.iloc[:, 0]
+            if not df.empty:
+                # 處理 yfinance 可能回傳的多重索引問題
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.droplevel(1)
                 
-                # 計算即時 MAs (5分、20分)
-                ma5 = closes.rolling(window=5).mean()
-                ma20 = closes.rolling(window=20).mean()
+                # 計算六大均線
+                mas = [5, 10, 20, 60, 120, 240]
+                ma_colors = ['#f39c12', '#3498db', '#9b59b6', '#2ecc71', '#e74c3c', '#7f8c8d']
                 
-                current = closes.iloc[-1]
-                df_5d = yf.download("^TWII", period="5d", progress=False)
-                prev_close = df_5d['Close'].iloc[-2] if len(df_5d) > 1 else closes.iloc[0]
-                if isinstance(prev_close, pd.Series): 
-                    prev_close = prev_close.iloc[0]
+                for ma in mas:
+                    df[f'MA{ma}'] = df['Close'].rolling(window=ma).mean()
                 
+                # 移除因為計算 MA 產生的 NaN，但保留足夠畫圖的資料
+                # 抓取最後一筆資料來顯示現在點數
+                current = df['Close'].iloc[-1]
+                prev_close = df['Close'].iloc[-2]
                 change = current - prev_close
                 change_pct = (change / prev_close) * 100
                 
-                col_data, col_chart = st.columns([1, 4])
-                
-                with col_data:
+                with col_metric:
                     st.metric(
-                        label="台灣加權指數 (TAIEX)", 
+                        label=f"台灣加權指數 ({period_opt})", 
                         value=f"{current:,.0f}", 
                         delta=f"{change:,.0f} ({change_pct:.2f}%)",
                         delta_color="inverse"
                     )
-                    st.write("") 
-                    if st.button("🔄 重新整理", help="獲取最新報價"):
-                        st.rerun()
-                        
-                with col_chart:
-                    line_color = "#dc3545" if change >= 0 else "#28a745"
-                    fill_color = "rgba(220, 53, 69, 0.05)" if change >= 0 else "rgba(40, 167, 69, 0.05)"
-                    
-                    fig = go.Figure()
-
-                    # 1. 繪製面積走勢圖
+                
+                # --- 開始繪製 Plotly 技術分析圖 ---
+                fig = go.Figure()
+                
+                # 1. 繪製 K 線 (Candlestick)
+                fig.add_trace(go.Candlestick(
+                    x=df.index,
+                    open=df['Open'], high=df['High'],
+                    low=df['Low'], close=df['Close'],
+                    name='K線',
+                    increasing_line_color='#dc3545', increasing_fillcolor='#dc3545', # 漲紅
+                    decreasing_line_color='#28a745', decreasing_fillcolor='#28a745'  # 跌綠
+                ))
+                
+                # 2. 繪製均線 (MA)
+                for ma, color in zip(mas, ma_colors):
                     fig.add_trace(go.Scatter(
-                        x=closes.index, y=closes.values,
-                        fill='tozeroy', mode='lines', name='指數',
-                        line=dict(color=line_color, width=2.5),
-                        fillcolor=fill_color,
-                        hoverinfo='x+y'
+                        x=df.index, y=df[f'MA{ma}'],
+                        mode='lines', name=f'MA{ma}',
+                        line=dict(color=color, width=1.2),
+                        hoverinfo='y' # 十字線顯示數值
                     ))
-
-                    # 2. 繪製 5MA (快線)
-                    fig.add_trace(go.Scatter(
-                        x=ma5.index, y=ma5.values,
-                        mode='lines', name='5MA',
-                        line=dict(color='#ff7f0e', width=1, dash='dot'), # 橘色虛線
-                        hoverinfo='skip'
-                    ))
-
-                    # 3. 繪製 20MA (慢線)
-                    fig.add_trace(go.Scatter(
-                        x=ma20.index, y=ma20.values,
-                        mode='lines', name='20MA',
-                        line=dict(color='#1f77b4', width=1), # 藍色實線
-                        hoverinfo='skip'
-                    ))
-                    
-                    # 動態調整 Y 軸範圍，確保波動明顯
-                    y_min = closes.min() * 0.9995
-                    y_max = closes.max() * 1.0005
-                    
-                    fig.update_layout(
-                        margin=dict(l=40, r=10, t=10, b=30), # 留出 L 和 B 的空間給數字
-                        height=250, # 稍微拉高一點看數字比較舒服
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        showlegend=True, # 顯示 MA 標籤
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                        xaxis=dict(
-                            visible=True, 
-                            showgrid=True, 
-                            gridcolor='rgba(200,200,200,0.1)',
-                            tickformat="%H:%M" # 格式化時間
-                        ),
-                        yaxis=dict(
-                            visible=True, 
-                            side="left", # 數字放在左邊
-                            showgrid=True, 
-                            gridcolor='rgba(200,200,200,0.1)',
-                            range=[y_min, y_max],
-                            tickformat="," # 數字加上千分位
-                        ),
-                        dragmode=False
-                    )
-                    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                
+                # 計算要顯示的視角範圍 (不要讓 10 年的資料全部擠在一起)
+                visible_points = 150 # 預設顯示最近的 150 根 K 棒
+                if len(df) > visible_points:
+                    x_min = df.index[-visible_points]
+                else:
+                    x_min = df.index[0]
+                
+                # 加一點緩衝區到右邊
+                if period_opt == "日線": x_offset = timedelta(days=5)
+                elif period_opt == "週線": x_offset = timedelta(days=21)
+                else: x_offset = timedelta(days=90)
+                x_max = df.index[-1] + x_offset
+                
+                fig.update_layout(
+                    margin=dict(l=10, r=40, t=10, b=10),
+                    height=450,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    xaxis_rangeslider_visible=False, # 隱藏下方肥大的範圍拖拉條
+                    legend=dict(
+                        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                        bgcolor="rgba(255,255,255,0.5)" # 均線標籤放在上方
+                    ),
+                    xaxis=dict(
+                        showgrid=True, gridcolor='rgba(200,200,200,0.2)',
+                        range=[x_min, x_max],
+                        type="date"
+                    ),
+                    yaxis=dict(
+                        showgrid=True, gridcolor='rgba(200,200,200,0.2)',
+                        side="right", # Yahoo 習慣將 Y 軸價格放在右邊
+                        tickformat=","
+                    ),
+                    hovermode="x unified" # 超好用：滑鼠移過去會顯示一整排當日數據
+                )
+                
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                
             else:
-                st.warning("⚠️ 目前非交易時間，或無法取得即時報價。")
+                st.warning("⚠️ 無法取得 Yahoo 報價。")
         except Exception as e:
-            st.error(f"大盤圖表載入失敗。錯誤: {e}")
+            st.error(f"大盤圖表載入失敗，請確認網路連線。錯誤: {e}")
 
 # --- 5. 搜尋與驗證邏輯 ---
 def search_yahoo_api(query):
@@ -347,7 +356,8 @@ def render_table(rows, date_label, trend_label):
 # --- 10. 主介面 ---
 st.title("🚀 台股 AI 趨勢雷達")
 
-render_taiex_realtime_chart()
+# 這裡渲染全新進化的 TA 大盤圖表
+render_taiex_ta_chart()
 st.markdown("---")
 
 with st.container():
@@ -365,7 +375,6 @@ with st.container():
 
 t1, t2, t3 = st.tabs(["🚀 短線飆股 (1個月)", "🌊 中線波段 (半年)", "📅 長線價值 (1年)"])
 
-# 修改日期解包語法
 d1 = (datetime.now() + timedelta(days=30)).strftime("%m/%d")
 d2 = (datetime.now() + timedelta(days=180)).strftime("%m/%d")
 d3 = (datetime.now() + timedelta(days=365)).strftime("%m/%d")
