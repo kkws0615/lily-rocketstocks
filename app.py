@@ -6,6 +6,7 @@ import requests
 import re
 import numpy as np
 from datetime import datetime, timedelta
+import plotly.graph_objects as go
 
 # --- 1. 頁面基本設定 ---
 st.set_page_config(
@@ -16,6 +17,7 @@ st.set_page_config(
 
 # --- 2. 內建核心熱門股清單 ---
 DEFAULT_STOCKS = [
+    # 上市權值 (.TW)
     ("2330.TW", "台積電"), ("2454.TW", "聯發科"), ("2317.TW", "鴻海"), ("2303.TW", "聯電"), ("2308.TW", "台達電"),
     ("2382.TW", "廣達"), ("3231.TW", "緯創"), ("2357.TW", "華碩"), ("6669.TW", "緯穎"), ("3008.TW", "大立光"),
     ("2376.TW", "技嘉"), ("2356.TW", "英業達"), ("3017.TW", "奇鋐"), ("2301.TW", "光寶科"), ("3711.TW", "日月光投控"),
@@ -25,10 +27,12 @@ DEFAULT_STOCKS = [
     ("1513.TW", "中興電"), ("1519.TW", "華城"), ("1503.TW", "士電"), ("1504.TW", "東元"), ("1514.TW", "亞力"),
     ("6271.TW", "同欣電"), ("2453.TW", "凌群"), ("1616.TW", "億泰"), ("1618.TW", "合機"), ("2344.TW", "華邦電"),
 
+    # 上櫃熱門 (.TWO)
     ("5274.TWO", "信驊"), ("3529.TWO", "力旺"), ("8299.TWO", "群聯"), ("5347.TWO", "世界先進"), ("3293.TWO", "鈊象"),
     ("8069.TWO", "元太"), ("6147.TWO", "頎邦"), ("3105.TWO", "穩懋"), ("6488.TWO", "環球晶"), ("5483.TWO", "中美晶"),
     ("3324.TWO", "雙鴻"), ("6274.TWO", "台燿"), ("3260.TWO", "威剛"), ("6282.TW", "康舒"), ("4953.TWO", "緯軟"),
     
+    # 熱門 ETF
     ("0050.TW", "元大台灣50"), ("0056.TW", "元大高股息"), ("00878.TW", "國泰永續高股息"), ("00919.TW", "群益台灣精選高息"),
     ("00929.TW", "復華台灣科技優息"), ("00940.TW", "元大台灣價值高息"), ("00679B.TWO", "元大美債20年")
 ]
@@ -48,13 +52,10 @@ for code, name in DEFAULT_STOCKS:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-import plotly.graph_objects as go # 記得在檔案最上方加入這行 import
-
 # --- 4. 大盤即時走勢圖 (Plotly 精緻刻劃版) ---
 def render_taiex_realtime_chart():
     with st.container():
         try:
-            # 抓取加權指數 (^TWII) 今日 1 分鐘線
             df_intraday = yf.download("^TWII", period="1d", interval="1m", progress=False)
             
             if not df_intraday.empty:
@@ -62,10 +63,8 @@ def render_taiex_realtime_chart():
                 if isinstance(closes, pd.DataFrame):
                     closes = closes.iloc[:, 0]
                 
-                # 計算即時漲跌
                 current = closes.iloc[-1]
                 
-                # 抓取近 5 天資料來精準取得「昨日收盤價」
                 df_5d = yf.download("^TWII", period="5d", progress=False)
                 prev_close = df_5d['Close'].iloc[-2] if len(df_5d) > 1 else closes.iloc[0]
                 if isinstance(prev_close, pd.Series): 
@@ -88,54 +87,41 @@ def render_taiex_realtime_chart():
                         st.rerun()
                         
                 with col_chart:
-                    # --- 使用 Plotly 繪製精緻的面積圖 ---
-                    
-                    # 決定顏色：漲紅、跌綠 (台股習慣)
                     line_color = "#dc3545" if change >= 0 else "#28a745"
                     fill_color = "rgba(220, 53, 69, 0.1)" if change >= 0 else "rgba(40, 167, 69, 0.1)"
                     
                     fig = go.Figure()
-                    
-                    # 加入面積線
                     fig.add_trace(go.Scatter(
                         x=closes.index, 
                         y=closes.values,
-                        fill='tozeroy',          # 填滿至 Y=0 (視覺上會被 Y 軸範圍限制)
-                        mode='lines',            # 只畫線
-                        line=dict(color=line_color, width=2), # 線的顏色與粗細
-                        fillcolor=fill_color,    # 面積的漸層顏色
-                        hoverinfo='x+y'          # 滑鼠移過去顯示時間與點數
+                        fill='tozeroy',          
+                        mode='lines',            
+                        line=dict(color=line_color, width=2), 
+                        fillcolor=fill_color,    
+                        hoverinfo='x+y'          
                     ))
                     
-                    # 抓取當天最高與最低點，加上微小緩衝，讓波幅看起來最明顯
                     y_min = closes.min() * 0.999
                     y_max = closes.max() * 1.001
                     
-                    # 設定圖表外觀 (極簡化)
                     fig.update_layout(
-                        margin=dict(l=0, r=0, t=10, b=0), # 移除周圍空白
-                        height=180,                       # 圖表高度
-                        paper_bgcolor="rgba(0,0,0,0)",    # 背景透明
-                        plot_bgcolor="rgba(0,0,0,0)",     # 繪圖區透明
-                        xaxis=dict(
-                            visible=False,                # 隱藏 X 軸
-                            showgrid=False                # 隱藏 X 軸網格
-                        ),
+                        margin=dict(l=0, r=0, t=10, b=0), 
+                        height=180,                       
+                        paper_bgcolor="rgba(0,0,0,0)",    
+                        plot_bgcolor="rgba(0,0,0,0)",     
+                        xaxis=dict(visible=False, showgrid=False),
                         yaxis=dict(
-                            visible=False,                # 隱藏 Y 軸 (不想看到就設 False，若想看數字可設 True)
-                            showgrid=False,               # 隱藏 Y 軸網格
-                            range=[y_min, y_max]          # 【關鍵】強制 Y 軸縮放至當天波幅範圍
+                            visible=False, showgrid=False,
+                            range=[y_min, y_max]          
                         ),
-                        showlegend=False,                 # 隱藏圖例
-                        dragmode=False                    # 禁止拖曳縮放 (保持畫面固定)
+                        showlegend=False,                 
+                        dragmode=False                    
                     )
-                    
-                    # 在 Streamlit 中渲染 Plotly 圖表，關閉互動工具列
                     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             else:
-                st.warning("⚠️ 目前非交易時間，或無法取得 Yahoo 即時報價。")
+                st.warning("⚠️ 目前非交易時間，或無法取得即時報價。")
         except Exception as e:
-            st.error(f"大盤圖表載入失敗，請確認網路連線。錯誤訊息: {e}")
+            st.error(f"大盤圖表載入失敗，請確認網路連線。錯誤: {e}")
 
 # --- 5. 搜尋與驗證邏輯 ---
 def search_yahoo_api(query):
@@ -303,11 +289,11 @@ def render_table(rows, date_label, trend_label):
         th {{ background: #f2f2f2; padding: 10px; text-align: left; position: sticky; top: 0; border-bottom: 2px solid #ddd; z-index: 10; }}
         td {{ padding: 10px; border-bottom: 1px solid #eee; vertical-align: middle; }}
         .up {{ color: #d62728; font-weight: bold; }} .down {{ color: #2ca02c; font-weight: bold; }}
-        .tag-strong {{ background: #ffebeb; color: #d62728; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
-        .tag-buy {{ background: #e6ffe6; color: #2ca02c; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
-        .tag-sell {{ background: #f1f3f5; color: #495057; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
-        .tag-hold {{ background: #fff; border: 1px solid #eee; color: #868e96; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
-        #tt {{ position: fixed; display: none; width: 280px; background: #2c3e50; color: #fff; padding: 12px; border-radius: 8px; z-index: 999; font-size: 13px; line-height: 1.5; }}
+        .tag-strong {{ background: #ffebeb; color: #d62728; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        .tag-buy {{ background: #e6ffe6; color: #2ca02c; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        .tag-sell {{ background: #f1f3f5; color: #495057; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        .tag-hold {{ background: #fff; border: 1px solid #eee; color: #868e96; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        #tt {{ position: fixed; display: none; width: 280px; background: #2c3e50; color: #fff; padding: 12px; border-radius: 8px; z-index: 999; font-size: 13px; line-height: 1.5; pointer-events: none;}}
     </style>
     <div id="tt"></div>
     <table>
@@ -333,7 +319,7 @@ def render_table(rows, date_label, trend_label):
 # --- 10. 主介面 ---
 st.title("🚀 台股 AI 趨勢雷達")
 
-# 這裡呼叫全新本土化的大盤圖表
+st.markdown("### 📊 台灣加權指數 (即時走勢)")
 render_taiex_realtime_chart()
 st.markdown("---")
 
