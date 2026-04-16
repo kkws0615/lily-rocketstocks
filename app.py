@@ -49,27 +49,23 @@ for code, name in DEFAULT_STOCKS:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 4. 大盤技術分析圖 (日/週/月 K線與多空均線) ---
+# --- 4. 大盤技術分析圖 (新增上方 MA 數值直接顯示) ---
 def render_taiex_ta_chart():
-    # 版面設定：左邊放數值與按鈕，右邊放切換按鈕
-    col_metric, col_controls = st.columns([1, 4])
+    col_metric, col_controls = st.columns([2, 3])
     
     with col_controls:
-        # 使用 Radio button 作為週期選擇器
         period_opt = st.radio("選擇週期", ["日線", "週線", "月線"], horizontal=True, label_visibility="collapsed")
     
     with st.container():
         try:
-            # 根據週期抓取足夠計算 MA240 的資料量
             if period_opt == "日線":
                 df = yf.download("^TWII", period="2y", interval="1d", progress=False)
             elif period_opt == "週線":
                 df = yf.download("^TWII", period="10y", interval="1wk", progress=False)
-            else: # 月線
+            else: 
                 df = yf.download("^TWII", period="20y", interval="1mo", progress=False)
             
             if not df.empty:
-                # 處理 yfinance 可能回傳的多重索引問題
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.droplevel(1)
                 
@@ -80,12 +76,13 @@ def render_taiex_ta_chart():
                 for ma in mas:
                     df[f'MA{ma}'] = df['Close'].rolling(window=ma).mean()
                 
-                # 移除因為計算 MA 產生的 NaN，但保留足夠畫圖的資料
-                # 抓取最後一筆資料來顯示現在點數
                 current = df['Close'].iloc[-1]
                 prev_close = df['Close'].iloc[-2]
                 change = current - prev_close
                 change_pct = (change / prev_close) * 100
+                
+                # 抓取最後一筆 (今日/今週/今月) 的 MA 數值
+                cur_ma = {ma: df[f'MA{ma}'].iloc[-1] for ma in mas}
                 
                 with col_metric:
                     st.metric(
@@ -95,36 +92,45 @@ def render_taiex_ta_chart():
                         delta_color="inverse"
                     )
                 
+                # 【重點新增】在圖表正上方，直接把 MA 算出來印上去，顏色對應線條
+                ma_html = f"""
+                <div style="font-family: 'Microsoft JhengHei', sans-serif; font-size: 14px; margin-bottom: 5px; padding: 10px; background-color: #f8f9fa; border-radius: 8px; font-weight: bold;">
+                    <span style="color: {ma_colors[0]}; margin-right: 15px;">MA5: {cur_ma[5]:,.0f}</span>
+                    <span style="color: {ma_colors[1]}; margin-right: 15px;">MA10: {cur_ma[10]:,.0f}</span>
+                    <span style="color: {ma_colors[2]}; margin-right: 15px;">MA20: {cur_ma[20]:,.0f}</span>
+                    <span style="color: {ma_colors[3]}; margin-right: 15px;">MA60: {cur_ma[60]:,.0f}</span>
+                    <span style="color: {ma_colors[4]}; margin-right: 15px;">MA120: {cur_ma[120]:,.0f}</span>
+                    <span style="color: {ma_colors[5]};">MA240: {cur_ma[240]:,.0f}</span>
+                </div>
+                """
+                st.markdown(ma_html, unsafe_allow_html=True)
+                
                 # --- 開始繪製 Plotly 技術分析圖 ---
                 fig = go.Figure()
                 
-                # 1. 繪製 K 線 (Candlestick)
                 fig.add_trace(go.Candlestick(
                     x=df.index,
                     open=df['Open'], high=df['High'],
                     low=df['Low'], close=df['Close'],
                     name='K線',
-                    increasing_line_color='#dc3545', increasing_fillcolor='#dc3545', # 漲紅
-                    decreasing_line_color='#28a745', decreasing_fillcolor='#28a745'  # 跌綠
+                    increasing_line_color='#dc3545', increasing_fillcolor='#dc3545', 
+                    decreasing_line_color='#28a745', decreasing_fillcolor='#28a745'  
                 ))
                 
-                # 2. 繪製均線 (MA)
                 for ma, color in zip(mas, ma_colors):
                     fig.add_trace(go.Scatter(
                         x=df.index, y=df[f'MA{ma}'],
                         mode='lines', name=f'MA{ma}',
                         line=dict(color=color, width=1.2),
-                        hoverinfo='y' # 十字線顯示數值
+                        hoverinfo='y' 
                     ))
                 
-                # 計算要顯示的視角範圍 (不要讓 10 年的資料全部擠在一起)
-                visible_points = 150 # 預設顯示最近的 150 根 K 棒
+                visible_points = 150 
                 if len(df) > visible_points:
                     x_min = df.index[-visible_points]
                 else:
                     x_min = df.index[0]
                 
-                # 加一點緩衝區到右邊
                 if period_opt == "日線": x_offset = timedelta(days=5)
                 elif period_opt == "週線": x_offset = timedelta(days=21)
                 else: x_offset = timedelta(days=90)
@@ -135,11 +141,8 @@ def render_taiex_ta_chart():
                     height=450,
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)",
-                    xaxis_rangeslider_visible=False, # 隱藏下方肥大的範圍拖拉條
-                    legend=dict(
-                        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-                        bgcolor="rgba(255,255,255,0.5)" # 均線標籤放在上方
-                    ),
+                    xaxis_rangeslider_visible=False, 
+                    showlegend=False, # 已經把 MA 數值寫在上面了，所以隱藏圖例讓畫面更乾淨
                     xaxis=dict(
                         showgrid=True, gridcolor='rgba(200,200,200,0.2)',
                         range=[x_min, x_max],
@@ -147,10 +150,10 @@ def render_taiex_ta_chart():
                     ),
                     yaxis=dict(
                         showgrid=True, gridcolor='rgba(200,200,200,0.2)',
-                        side="right", # Yahoo 習慣將 Y 軸價格放在右邊
+                        side="right", 
                         tickformat=","
                     ),
-                    hovermode="x unified" # 超好用：滑鼠移過去會顯示一整排當日數據
+                    hovermode="x unified" 
                 )
                 
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
@@ -356,7 +359,6 @@ def render_table(rows, date_label, trend_label):
 # --- 10. 主介面 ---
 st.title("🚀 台股 AI 趨勢雷達")
 
-# 這裡渲染全新進化的 TA 大盤圖表
 render_taiex_ta_chart()
 st.markdown("---")
 
