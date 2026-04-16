@@ -46,40 +46,40 @@ for code, name in DEFAULT_STOCKS:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 3. 大盤即時走勢圖 (TradingView 嵌入) ---
+# --- 3. 大盤即時走勢圖 (專業 K 線風格) ---
 def render_taiex_realtime_chart():
-    # 使用 TradingView Advanced Chart Widget，設定為 1 分鐘線(1)、面積圖(style:3)，與 Yahoo 風格一致
     html_code = """
     <div class="tradingview-widget-container" style="height:100%;width:100%">
-      <div id="tradingview_taiex" style="height:calc(100% - 32px);width:100%"></div>
+      <div id="tradingview_taiex" style="height:calc(100% - 10px);width:100%"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
       <script type="text/javascript">
       new TradingView.widget(
       {
       "autosize": true,
       "symbol": "TWSE:TAIEX",
-      "interval": "1",
+      "interval": "1",            // 預設 1 分鐘線，適合看當日走勢
       "timezone": "Asia/Taipei",
       "theme": "light",
-      "style": "3",
+      "style": "1",               // 重點：1 代表 K線圖 (Candles)
       "locale": "zh_TW",
       "enable_publishing": false,
-      "backgroundColor": "rgba(248, 249, 250, 1)",
-      "gridColor": "rgba(240, 243, 250, 0)",
-      "hide_top_toolbar": true,
-      "hide_legend": true,
+      "backgroundColor": "#ffffff",
+      "gridColor": "rgba(240, 243, 250, 0.5)",
+      "hide_top_toolbar": true,   // 隱藏頂部畫圖與指標工具，保持清爽
+      "hide_legend": false,       // 顯示左上角開高低收資訊與指標名稱
       "save_image": false,
       "container_id": "tradingview_taiex",
+      "withdateranges": true,     // 重點：顯示底部的 1D, 5D, 1M 時間區間選擇器
       "studies": [
-        "Volume@tv-basicstudies"
+        "Volume@tv-basicstudies"  // 顯示下方成交量柱狀圖
       ]
     }
       );
       </script>
     </div>
     """
-    # 渲染高度設定為 350px 的互動視窗
-    components.html(html_code, height=350)
+    # 高度設為 400px 給 K 線和底部按鈕留點空間
+    components.html(html_code, height=400)
 
 # --- 4. 搜尋與驗證 ---
 def search_yahoo_api(query):
@@ -145,7 +145,6 @@ def calculate_rsi(series, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# A. 短線
 def analyze_short_term(current_price, ma20, ma60, vol_ratio, rsi):
     if ma60 is None: return "觀察", "tag-hold", 40, "👀 資料不足", 2, current_price
     bias_20 = ((current_price - ma20) / ma20) * 100
@@ -168,7 +167,6 @@ def analyze_short_term(current_price, ma20, ma60, vol_ratio, rsi):
     else:
         return "觀察", "tag-hold", 50, full_reason, 2, current_price * 1.02
 
-# B. 中線
 def analyze_medium_term(current_price, ma60, ma120):
     if ma120 is None: return "資料不足", "tag-hold", 0, "⚠️ 資料不足半年", 0, current_price
     
@@ -191,7 +189,6 @@ def analyze_medium_term(current_price, ma60, ma120):
     else:
         return "觀察", "tag-hold", 50, full_reason, 2, current_price
 
-# C. 長線
 def analyze_year_term(current_price, ma240, rsi):
     if ma240 is None: return "資料不足", "tag-hold", 0, "⚠️ 資料不足一年", 0, current_price
     
@@ -384,7 +381,7 @@ def render_html_table(rows, target_date_str, sparkline_label):
 # --- 8. 主程式介面佈局 ---
 st.title("🚀 台股 AI 趨勢雷達")
 
-# 【新增】大盤即時走勢圖
+# 大盤即時走勢圖
 st.markdown("### 📊 台灣加權指數 (即時走勢)")
 render_taiex_realtime_chart()
 st.markdown("---")
