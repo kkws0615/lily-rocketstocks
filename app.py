@@ -306,7 +306,9 @@ with st.container():
                 else: st.error(e)
 
 t1, t2, t3 = st.tabs(["🚀 短線飆股 (1個月)", "🌊 中線波段 (半年)", "📅 長線價值 (1年)"])
-d1, d2, d3 = (datetime.now() + timedelta(days=x)).strftime("%m/%d") for x in [30, 180, 365]
+d1 = (datetime.now() + timedelta(days=30)).strftime("%m/%d")
+d2 = (datetime.now() + timedelta(days=180)).strftime("%m/%d")
+d3 = (datetime.now() + timedelta(days=365)).strftime("%m/%d")
 
 with t1:
     rows = process_stock_data("short")
