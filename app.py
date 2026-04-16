@@ -15,23 +15,50 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. 內建核心熱門股清單 ---
+# --- 2. 內建核心熱門股清單 (🌟 全新進化：百大熱門板塊分類) ---
 DEFAULT_STOCKS = [
-    ("2330.TW", "台積電"), ("2454.TW", "聯發科"), ("2317.TW", "鴻海"), ("2303.TW", "聯電"), ("2308.TW", "台達電"),
-    ("2382.TW", "廣達"), ("3231.TW", "緯創"), ("2357.TW", "華碩"), ("6669.TW", "緯穎"), ("3008.TW", "大立光"),
-    ("2376.TW", "技嘉"), ("2356.TW", "英業達"), ("3017.TW", "奇鋐"), ("2301.TW", "光寶科"), ("3711.TW", "日月光投控"),
-    ("2603.TW", "長榮"), ("2609.TW", "陽明"), ("2615.TW", "萬海"), ("2618.TW", "長榮航"), ("2610.TW", "華航"),
-    ("2881.TW", "富邦金"), ("2882.TW", "國泰金"), ("2891.TW", "中信金"), ("2886.TW", "兆豐金"), ("2884.TW", "玉山金"),
-    ("5880.TW", "合庫金"), ("2892.TW", "第一金"), ("2880.TW", "華南金"), ("2885.TW", "元大金"), ("2890.TW", "永豐金"),
-    ("1513.TW", "中興電"), ("1519.TW", "華城"), ("1503.TW", "士電"), ("1504.TW", "東元"), ("1514.TW", "亞力"),
-    ("6271.TW", "同欣電"), ("2453.TW", "凌群"), ("1616.TW", "億泰"), ("1618.TW", "合機"), ("2344.TW", "華邦電"),
+    # --- 半導體與 IC 設計 ---
+    ("2330.TW", "台積電"), ("2454.TW", "聯發科"), ("2303.TW", "聯電"), ("3711.TW", "日月光投控"),
+    ("2379.TW", "瑞昱"), ("3034.TW", "聯詠"), ("3661.TW", "世芯-KY"), ("3443.TW", "創意"),
+    ("5274.TWO", "信驊"), ("3529.TWO", "力旺"), ("8299.TWO", "群聯"), ("5347.TWO", "世界先進"),
+    ("6488.TWO", "環球晶"), ("5483.TWO", "中美晶"), ("3105.TWO", "穩懋"), ("4966.TW", "譜瑞-KY"),
+    ("2408.TW", "南亞科"), ("2344.TW", "華邦電"), ("2337.TW", "旺宏"), ("3583.TW", "辛耘"),
 
-    ("5274.TWO", "信驊"), ("3529.TWO", "力旺"), ("8299.TWO", "群聯"), ("5347.TWO", "世界先進"), ("3293.TWO", "鈊象"),
-    ("8069.TWO", "元太"), ("6147.TWO", "頎邦"), ("3105.TWO", "穩懋"), ("6488.TWO", "環球晶"), ("5483.TWO", "中美晶"),
-    ("3324.TWO", "雙鴻"), ("6274.TWO", "台燿"), ("3260.TWO", "威剛"), ("6282.TW", "康舒"), ("4953.TWO", "緯軟"),
-    
-    ("0050.TW", "元大台灣50"), ("0056.TW", "元大高股息"), ("00878.TW", "國泰永續高股息"), ("00919.TW", "群益台灣精選高息"),
-    ("00929.TW", "復華台灣科技優息"), ("00940.TW", "元大台灣價值高息"), ("00679B.TWO", "元大美債20年")
+    # --- AI 伺服器、代工與電腦周邊 ---
+    ("2317.TW", "鴻海"), ("2382.TW", "廣達"), ("3231.TW", "緯創"), ("6669.TW", "緯穎"),
+    ("2376.TW", "技嘉"), ("2356.TW", "英業達"), ("2357.TW", "華碩"), ("2324.TW", "仁寶"),
+    ("4938.TW", "和碩"), ("8210.TW", "勤誠"), ("3017.TW", "奇鋐"), ("3324.TWO", "雙鴻"), 
+    ("2421.TW", "建準"), ("3037.TW", "欣興"), ("2368.TW", "金像電"), ("2383.TW", "台光電"), 
+    ("6274.TWO", "台燿"), ("4953.TWO", "緯軟"),
+
+    # --- 零組件、光學與車用 ---
+    ("2308.TW", "台達電"), ("3008.TW", "大立光"), ("3406.TW", "玉晶光"), ("2327.TW", "國巨"),
+    ("2492.TW", "華新科"), ("2301.TW", "光寶科"), ("1560.TW", "中砂"), ("3533.TW", "嘉澤"),
+    ("6271.TW", "同欣電"), ("5425.TWO", "台半"), ("8215.TW", "明基材"),
+
+    # --- 重電、綠能與電纜 ---
+    ("1519.TW", "華城"), ("1513.TW", "中興電"), ("1503.TW", "士電"), ("1514.TW", "亞力"),
+    ("1504.TW", "東元"), ("1609.TW", "大亞"), ("1618.TW", "合機"), ("3708.TW", "上緯投控"),
+
+    # --- 航運與傳產龍頭 ---
+    ("2603.TW", "長榮"), ("2609.TW", "陽明"), ("2615.TW", "萬海"), ("2618.TW", "長榮航"),
+    ("2610.TW", "華航"), ("2002.TW", "中鋼"), ("1101.TW", "台泥"), ("1301.TW", "台塑"),
+    ("1303.TW", "南亞"), ("2912.TW", "統一超"), ("1216.TW", "統一"), ("9914.TW", "美利達"),
+
+    # --- 金融保險 ---
+    ("2881.TW", "富邦金"), ("2882.TW", "國泰金"), ("2891.TW", "中信金"), ("2886.TW", "兆豐金"),
+    ("2884.TW", "玉山金"), ("5880.TW", "合庫金"), ("2892.TW", "第一金"), ("2880.TW", "華南金"),
+    ("2885.TW", "元大金"), ("2890.TW", "永豐金"), ("2883.TW", "凱基金"), ("2887.TW", "台新金"),
+
+    # --- 軟體、遊戲與其他妖股 ---
+    ("3293.TWO", "鈊象"), ("8069.TWO", "元太"), ("2453.TW", "凌群"), ("3130.TW", "一零四"),
+    ("5904.TWO", "寶雅"), ("8454.TW", "富邦媒"),
+
+    # --- 熱門高股息與市值型 ETF ---
+    ("0050.TW", "元大台灣50"), ("006208.TW", "富邦台50"), ("0056.TW", "元大高股息"),
+    ("00878.TW", "國泰永續高股息"), ("00919.TW", "群益台灣精選高息"), ("00929.TW", "復華台灣科技優息"),
+    ("00940.TW", "元大台灣價值高息"), ("00713.TW", "元大台灣高息低波"), ("00915.TW", "凱基優選高股息30"),
+    ("00679B.TWO", "元大美債20年"), ("00687B.TW", "國泰20年美債")
 ]
 
 stock_map_code = {code: name for code, name in DEFAULT_STOCKS}
@@ -42,14 +69,20 @@ stock_map_simple = {code.split('.')[0]: code for code, name in DEFAULT_STOCKS}
 if 'watch_list' not in st.session_state:
     st.session_state.watch_list = {code: name for code, name in DEFAULT_STOCKS}
 
+# 強制更新既有清單，確保新的名字(如開發金改凱基金)能對齊
+new_watch_list = {}
 for code, name in DEFAULT_STOCKS:
-    if code in st.session_state.watch_list:
-        st.session_state.watch_list[code] = name
+    new_watch_list[code] = name
+# 保留使用者自己手動新增的股票
+for code, name in st.session_state.watch_list.items():
+    if code not in new_watch_list:
+        new_watch_list[code] = name
+st.session_state.watch_list = new_watch_list
 
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 4. 大盤技術分析圖 (新增上方 MA 數值直接顯示) ---
+# --- 4. 大盤技術分析圖 (日/週/月 K線與多空均線) ---
 def render_taiex_ta_chart():
     col_metric, col_controls = st.columns([2, 3])
     
@@ -69,7 +102,6 @@ def render_taiex_ta_chart():
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.droplevel(1)
                 
-                # 計算六大均線
                 mas = [5, 10, 20, 60, 120, 240]
                 ma_colors = ['#f39c12', '#3498db', '#9b59b6', '#2ecc71', '#e74c3c', '#7f8c8d']
                 
@@ -81,7 +113,6 @@ def render_taiex_ta_chart():
                 change = current - prev_close
                 change_pct = (change / prev_close) * 100
                 
-                # 抓取最後一筆 (今日/今週/今月) 的 MA 數值
                 cur_ma = {ma: df[f'MA{ma}'].iloc[-1] for ma in mas}
                 
                 with col_metric:
@@ -92,7 +123,6 @@ def render_taiex_ta_chart():
                         delta_color="inverse"
                     )
                 
-                # 【重點新增】在圖表正上方，直接把 MA 算出來印上去，顏色對應線條
                 ma_html = f"""
                 <div style="font-family: 'Microsoft JhengHei', sans-serif; font-size: 14px; margin-bottom: 5px; padding: 10px; background-color: #f8f9fa; border-radius: 8px; font-weight: bold;">
                     <span style="color: {ma_colors[0]}; margin-right: 15px;">MA5: {cur_ma[5]:,.0f}</span>
@@ -105,7 +135,6 @@ def render_taiex_ta_chart():
                 """
                 st.markdown(ma_html, unsafe_allow_html=True)
                 
-                # --- 開始繪製 Plotly 技術分析圖 ---
                 fig = go.Figure()
                 
                 fig.add_trace(go.Candlestick(
@@ -142,7 +171,7 @@ def render_taiex_ta_chart():
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)",
                     xaxis_rangeslider_visible=False, 
-                    showlegend=False, # 已經把 MA 數值寫在上面了，所以隱藏圖例讓畫面更乾淨
+                    showlegend=False, 
                     xaxis=dict(
                         showgrid=True, gridcolor='rgba(200,200,200,0.2)',
                         range=[x_min, x_max],
