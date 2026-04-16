@@ -46,40 +46,41 @@ for code, name in DEFAULT_STOCKS:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 3. 大盤即時走勢圖 (專業 K 線風格) ---
+# --- 3. 大盤即時走勢圖 (高度完美貼合版) ---
 def render_taiex_realtime_chart():
+    # 將內外容器高度鎖定在 500px，避免比例失衡與下方留白
     html_code = """
-    <div class="tradingview-widget-container" style="height:100%;width:100%">
-      <div id="tradingview_taiex" style="height:calc(100% - 10px);width:100%"></div>
+    <div class="tradingview-widget-container" style="height: 500px; width: 100%;">
+      <div id="tradingview_taiex" style="height: 100%; width: 100%;"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
       <script type="text/javascript">
       new TradingView.widget(
       {
       "autosize": true,
       "symbol": "TWSE:TAIEX",
-      "interval": "1",            // 預設 1 分鐘線，適合看當日走勢
+      "interval": "1",            
       "timezone": "Asia/Taipei",
       "theme": "light",
-      "style": "1",               // 重點：1 代表 K線圖 (Candles)
+      "style": "1",               
       "locale": "zh_TW",
       "enable_publishing": false,
       "backgroundColor": "#ffffff",
       "gridColor": "rgba(240, 243, 250, 0.5)",
-      "hide_top_toolbar": true,   // 隱藏頂部畫圖與指標工具，保持清爽
-      "hide_legend": false,       // 顯示左上角開高低收資訊與指標名稱
+      "hide_top_toolbar": true,   
+      "hide_legend": false,       
       "save_image": false,
       "container_id": "tradingview_taiex",
-      "withdateranges": true,     // 重點：顯示底部的 1D, 5D, 1M 時間區間選擇器
+      "withdateranges": true,     
       "studies": [
-        "Volume@tv-basicstudies"  // 顯示下方成交量柱狀圖
+        "Volume@tv-basicstudies"  
       ]
     }
       );
       </script>
     </div>
     """
-    # 高度設為 400px 給 K 線和底部按鈕留點空間
-    components.html(html_code, height=400)
+    # 這裡的 height=500 必須與上方 html 內的 500px 完全一致
+    components.html(html_code, height=500)
 
 # --- 4. 搜尋與驗證 ---
 def search_yahoo_api(query):
@@ -299,20 +300,22 @@ def process_stock_data(strategy_type="short"):
     
     return sorted(rows, key=lambda x: x['score'], reverse=True)
 
-# --- 7. HTML 表格與畫圖 ---
+# --- 7. HTML 表格與畫圖 (微調高度) ---
 def make_sparkline(data):
     if not data or len(data) < 2: return ""
-    w, h = 180, 35
+    w, h = 180, 50 # 【拉高】從 35px 變成 50px，增加視覺豐富度
     min_v, max_v = min(data), max(data)
     if max_v == min_v: return ""
     pts = []
     for i, val in enumerate(data):
         x = (i / (len(data) - 1)) * w
-        y = h - ((val - min_v) / (max_v - min_v)) * (h - 4) - 2
+        # 加上留白避免頂到天花板或地板
+        y = h - ((val - min_v) / (max_v - min_v)) * (h - 10) - 5
         pts.append(f"{x},{y}")
     c = "#dc3545" if data[-1] > data[0] else "#28a745"
     last_pt = pts[-1].split(",")
-    return f'<svg width="{w}" height="{h}" style="overflow:visible"><polyline points="{" ".join(pts)}" fill="none" stroke="{c}" stroke-width="2"/><circle cx="{last_pt[0]}" cy="{last_pt[1]}" r="3" fill="{c}"/></svg>'
+    # 加上 margin: auto 確保它在 td 裡面置中
+    return f'<svg width="{w}" height="{h}" style="overflow:visible; display:block; margin:auto;"><polyline points="{" ".join(pts)}" fill="none" stroke="{c}" stroke-width="2"/><circle cx="{last_pt[0]}" cy="{last_pt[1]}" r="3" fill="{c}"/></svg>'
 
 def render_html_table(rows, target_date_str, sparkline_label):
     html = f"""
