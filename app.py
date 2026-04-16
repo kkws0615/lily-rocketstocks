@@ -48,7 +48,9 @@ for code, name in DEFAULT_STOCKS:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 4. 大盤即時走勢圖 (完全本土化 Yahoo 數據版) ---
+import plotly.graph_objects as go # 記得在檔案最上方加入這行 import
+
+# --- 4. 大盤即時走勢圖 (Plotly 精緻刻劃版) ---
 def render_taiex_realtime_chart():
     with st.container():
         try:
@@ -72,28 +74,68 @@ def render_taiex_realtime_chart():
                 change = current - prev_close
                 change_pct = (change / prev_close) * 100
                 
-                # 佈局：左邊放數字與更新按鈕，右邊放走勢圖
                 col_data, col_chart = st.columns([1, 4])
                 
                 with col_data:
-                    # delta_color="inverse" 讓台灣股市的漲變成紅色，跌變成綠色
                     st.metric(
                         label="台灣加權指數 (TAIEX)", 
                         value=f"{current:,.0f}", 
                         delta=f"{change:,.0f} ({change_pct:.2f}%)",
                         delta_color="inverse"
                     )
-                    st.write("") # 增加一點空隙
-                    if st.button("🔄 重新整理", help="點擊獲取 Yahoo 最新報價"):
+                    st.write("") 
+                    if st.button("🔄 重新整理", help="點擊獲取最新報價"):
                         st.rerun()
                         
                 with col_chart:
-                    # 使用內建的面積圖，完美還原 Yahoo 風格
-                    st.area_chart(closes, height=200)
+                    # --- 使用 Plotly 繪製精緻的面積圖 ---
+                    
+                    # 決定顏色：漲紅、跌綠 (台股習慣)
+                    line_color = "#dc3545" if change >= 0 else "#28a745"
+                    fill_color = "rgba(220, 53, 69, 0.1)" if change >= 0 else "rgba(40, 167, 69, 0.1)"
+                    
+                    fig = go.Figure()
+                    
+                    # 加入面積線
+                    fig.add_trace(go.Scatter(
+                        x=closes.index, 
+                        y=closes.values,
+                        fill='tozeroy',          # 填滿至 Y=0 (視覺上會被 Y 軸範圍限制)
+                        mode='lines',            # 只畫線
+                        line=dict(color=line_color, width=2), # 線的顏色與粗細
+                        fillcolor=fill_color,    # 面積的漸層顏色
+                        hoverinfo='x+y'          # 滑鼠移過去顯示時間與點數
+                    ))
+                    
+                    # 抓取當天最高與最低點，加上微小緩衝，讓波幅看起來最明顯
+                    y_min = closes.min() * 0.999
+                    y_max = closes.max() * 1.001
+                    
+                    # 設定圖表外觀 (極簡化)
+                    fig.update_layout(
+                        margin=dict(l=0, r=0, t=10, b=0), # 移除周圍空白
+                        height=180,                       # 圖表高度
+                        paper_bgcolor="rgba(0,0,0,0)",    # 背景透明
+                        plot_bgcolor="rgba(0,0,0,0)",     # 繪圖區透明
+                        xaxis=dict(
+                            visible=False,                # 隱藏 X 軸
+                            showgrid=False                # 隱藏 X 軸網格
+                        ),
+                        yaxis=dict(
+                            visible=False,                # 隱藏 Y 軸 (不想看到就設 False，若想看數字可設 True)
+                            showgrid=False,               # 隱藏 Y 軸網格
+                            range=[y_min, y_max]          # 【關鍵】強制 Y 軸縮放至當天波幅範圍
+                        ),
+                        showlegend=False,                 # 隱藏圖例
+                        dragmode=False                    # 禁止拖曳縮放 (保持畫面固定)
+                    )
+                    
+                    # 在 Streamlit 中渲染 Plotly 圖表，關閉互動工具列
+                    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
             else:
                 st.warning("⚠️ 目前非交易時間，或無法取得 Yahoo 即時報價。")
         except Exception as e:
-            st.error("大盤圖表載入失敗，請確認網路連線。")
+            st.error(f"大盤圖表載入失敗，請確認網路連線。錯誤訊息: {e}")
 
 # --- 5. 搜尋與驗證邏輯 ---
 def search_yahoo_api(query):
