@@ -14,9 +14,8 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. 內建核心熱門股清單 (確保代號與名稱正確匹配) ---
+# --- 2. 內建核心熱門股清單 ---
 DEFAULT_STOCKS = [
-    # 上市權值 (.TW)
     ("2330.TW", "台積電"), ("2454.TW", "聯發科"), ("2317.TW", "鴻海"), ("2303.TW", "聯電"), ("2308.TW", "台達電"),
     ("2382.TW", "廣達"), ("3231.TW", "緯創"), ("2357.TW", "華碩"), ("6669.TW", "緯穎"), ("3008.TW", "大立光"),
     ("2376.TW", "技嘉"), ("2356.TW", "英業達"), ("3017.TW", "奇鋐"), ("2301.TW", "光寶科"), ("3711.TW", "日月光投控"),
@@ -26,17 +25,14 @@ DEFAULT_STOCKS = [
     ("1513.TW", "中興電"), ("1519.TW", "華城"), ("1503.TW", "士電"), ("1504.TW", "東元"), ("1514.TW", "亞力"),
     ("6271.TW", "同欣電"), ("2453.TW", "凌群"), ("1616.TW", "億泰"), ("1618.TW", "合機"), ("2344.TW", "華邦電"),
 
-    # 上櫃熱門 (.TWO)
     ("5274.TWO", "信驊"), ("3529.TWO", "力旺"), ("8299.TWO", "群聯"), ("5347.TWO", "世界先進"), ("3293.TWO", "鈊象"),
     ("8069.TWO", "元太"), ("6147.TWO", "頎邦"), ("3105.TWO", "穩懋"), ("6488.TWO", "環球晶"), ("5483.TWO", "中美晶"),
     ("3324.TWO", "雙鴻"), ("6274.TWO", "台燿"), ("3260.TWO", "威剛"), ("6282.TW", "康舒"), ("4953.TWO", "緯軟"),
     
-    # 熱門 ETF
     ("0050.TW", "元大台灣50"), ("0056.TW", "元大高股息"), ("00878.TW", "國泰永續高股息"), ("00919.TW", "群益台灣精選高息"),
     ("00929.TW", "復華台灣科技優息"), ("00940.TW", "元大台灣價值高息"), ("00679B.TWO", "元大美債20年")
 ]
 
-# 快速查詢字典
 stock_map_code = {code: name for code, name in DEFAULT_STOCKS}
 stock_map_name = {name: code for code, name in DEFAULT_STOCKS}
 stock_map_simple = {code.split('.')[0]: code for code, name in DEFAULT_STOCKS}
@@ -52,40 +48,52 @@ for code, name in DEFAULT_STOCKS:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 4. 大盤即時走勢圖 (專業版 K 線圖) ---
+# --- 4. 大盤即時走勢圖 (完全本土化 Yahoo 數據版) ---
 def render_taiex_realtime_chart():
-    # 鎖定台灣加權指數，高度優化為 500px 並貼合邊界
-    html_code = """
-    <div class="tradingview-widget-container" style="height: 500px; width: 100%;">
-      <div id="tradingview_taiex" style="height: 100%; width: 100%;"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-      <script type="text/javascript">
-      new TradingView.widget(
-      {
-      "autosize": true,
-      "symbol": "TWSE:TAIEX",
-      "interval": "1",
-      "timezone": "Asia/Taipei",
-      "theme": "light",
-      "style": "1",
-      "locale": "zh_TW",
-      "enable_publishing": false,
-      "backgroundColor": "#ffffff",
-      "gridColor": "rgba(240, 243, 250, 0.5)",
-      "hide_top_toolbar": true,
-      "hide_legend": false,
-      "save_image": false,
-      "container_id": "tradingview_taiex",
-      "withdateranges": true,
-      "studies": [
-        "Volume@tv-basicstudies"
-      ]
-    }
-      );
-      </script>
-    </div>
-    """
-    components.html(html_code, height=500)
+    with st.container():
+        try:
+            # 抓取加權指數 (^TWII) 今日 1 分鐘線
+            df_intraday = yf.download("^TWII", period="1d", interval="1m", progress=False)
+            
+            if not df_intraday.empty:
+                closes = df_intraday['Close']
+                if isinstance(closes, pd.DataFrame):
+                    closes = closes.iloc[:, 0]
+                
+                # 計算即時漲跌
+                current = closes.iloc[-1]
+                
+                # 抓取近 5 天資料來精準取得「昨日收盤價」
+                df_5d = yf.download("^TWII", period="5d", progress=False)
+                prev_close = df_5d['Close'].iloc[-2] if len(df_5d) > 1 else closes.iloc[0]
+                if isinstance(prev_close, pd.Series): 
+                    prev_close = prev_close.iloc[0]
+                
+                change = current - prev_close
+                change_pct = (change / prev_close) * 100
+                
+                # 佈局：左邊放數字與更新按鈕，右邊放走勢圖
+                col_data, col_chart = st.columns([1, 4])
+                
+                with col_data:
+                    # delta_color="inverse" 讓台灣股市的漲變成紅色，跌變成綠色
+                    st.metric(
+                        label="台灣加權指數 (TAIEX)", 
+                        value=f"{current:,.0f}", 
+                        delta=f"{change:,.0f} ({change_pct:.2f}%)",
+                        delta_color="inverse"
+                    )
+                    st.write("") # 增加一點空隙
+                    if st.button("🔄 重新整理", help="點擊獲取 Yahoo 最新報價"):
+                        st.rerun()
+                        
+                with col_chart:
+                    # 使用內建的面積圖，完美還原 Yahoo 風格
+                    st.area_chart(closes, height=200)
+            else:
+                st.warning("⚠️ 目前非交易時間，或無法取得 Yahoo 即時報價。")
+        except Exception as e:
+            st.error("大盤圖表載入失敗，請確認網路連線。")
 
 # --- 5. 搜尋與驗證邏輯 ---
 def search_yahoo_api(query):
@@ -148,8 +156,6 @@ def calculate_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 # --- 7. 三大核心分析策略 ---
-
-# A. 短線 (1個月) - 月線 20MA
 def analyze_short_term(current_price, ma20, ma60, vol_ratio, rsi):
     if ma60 is None: return "觀察", "tag-hold", 40, "👀 資料不足", 2, current_price
     bias_20 = ((current_price - ma20) / ma20) * 100
@@ -166,10 +172,8 @@ def analyze_short_term(current_price, ma20, ma60, vol_ratio, rsi):
     else:
         return "觀察", "tag-hold", 50, "<br>".join(reasons), 2, current_price * 1.02
 
-# B. 中線 (半年) - 季線 60MA 與 半年線 120MA
 def analyze_medium_term(current_price, ma60, ma120):
     if ma120 is None: return "資料不足", "tag-hold", 0, "⚠️ 資料不足半年", 0, current_price
-    
     if current_price > ma120 and ma60 > ma120:
         bias_60 = ((current_price - ma60) / ma60) * 100
         if bias_60 < 10:
@@ -179,10 +183,8 @@ def analyze_medium_term(current_price, ma60, ma120):
         return "回檔佈局", "tag-buy", 85, "💰 回測半年線支撐。", 3.5, ma60
     return "觀察", "tag-hold", 50, "目前橫盤整理中。", 2, current_price
 
-# C. 長線 (1年) - 年線 240MA
 def analyze_year_term(current_price, ma240, rsi):
     if ma240 is None: return "資料不足", "tag-hold", 0, "⚠️ 資料不足一年", 0, current_price
-    
     bias_240 = ((current_price - ma240) / ma240) * 100
     if -5 < bias_240 < 10 and rsi > 45:
         return "長線買點", "tag-strong", 95, "💎 回測年線不破，價值浮現。", 4, ma240 * 1.3
@@ -213,12 +215,10 @@ def process_stock_data(strategy_type="short"):
             cur_p = closes.iloc[-1]
             change = ((cur_p - closes.iloc[-2]) / closes.iloc[-2]) * 100
             
-            # 均線計算
             ma20, ma60 = closes.rolling(20).mean().iloc[-1], closes.rolling(60).mean().iloc[-1]
             ma120 = closes.rolling(120).mean().iloc[-1] if len(closes) >= 120 else None
             ma240 = closes.rolling(240).mean().iloc[-1] if len(closes) >= 240 else None
             
-            # 指標與量能
             rsi = calculate_rsi(closes).iloc[-1]
             vols = df['Volume'].dropna()
             vol_ratio = vols.iloc[-1] / vols.rolling(5).mean().iloc[-1] if len(vols) >= 5 else 1.0
@@ -246,8 +246,9 @@ def process_stock_data(strategy_type="short"):
 # --- 9. 視覺化組件 ---
 def make_sparkline(data):
     if not data: return ""
-    w, h = 180, 50 # 走勢圖拉高至 50px，寬度 180px
+    w, h = 180, 50 
     mn, mx = min(data), max(data)
+    if mx == mn: return ""
     pts = " ".join([f"{(i/(len(data)-1))*w},{h-((v-mn)/(mx-mn))*(h-10)-5}" for i, v in enumerate(data)])
     color = "#dc3545" if data[-1] > data[0] else "#28a745"
     return f'<svg width="{w}" height="{h}" style="display:block;margin:auto;"><polyline points="{pts}" fill="none" stroke="{color}" stroke-width="2"/></svg>'
@@ -257,12 +258,13 @@ def render_table(rows, date_label, trend_label):
     <style>
         body {{ font-family: sans-serif; margin: 0; }}
         table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
-        th {{ background: #f2f2f2; padding: 10px; text-align: left; position: sticky; top: 0; border-bottom: 2px solid #ddd; }}
+        th {{ background: #f2f2f2; padding: 10px; text-align: left; position: sticky; top: 0; border-bottom: 2px solid #ddd; z-index: 10; }}
         td {{ padding: 10px; border-bottom: 1px solid #eee; vertical-align: middle; }}
         .up {{ color: #d62728; font-weight: bold; }} .down {{ color: #2ca02c; font-weight: bold; }}
         .tag-strong {{ background: #ffebeb; color: #d62728; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
         .tag-buy {{ background: #e6ffe6; color: #2ca02c; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
-        .tag-hold {{ background: #f8f9fa; color: #666; padding: 4px 8px; border-radius: 4px; }}
+        .tag-sell {{ background: #f1f3f5; color: #495057; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
+        .tag-hold {{ background: #fff; border: 1px solid #eee; color: #868e96; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
         #tt {{ position: fixed; display: none; width: 280px; background: #2c3e50; color: #fff; padding: 12px; border-radius: 8px; z-index: 999; font-size: 13px; line-height: 1.5; }}
     </style>
     <div id="tt"></div>
@@ -288,7 +290,8 @@ def render_table(rows, date_label, trend_label):
 
 # --- 10. 主介面 ---
 st.title("🚀 台股 AI 趨勢雷達")
-st.markdown("### 📊 台灣加權指數 (即時走勢)")
+
+# 這裡呼叫全新本土化的大盤圖表
 render_taiex_realtime_chart()
 st.markdown("---")
 
@@ -306,6 +309,7 @@ with st.container():
                 else: st.error(e)
 
 t1, t2, t3 = st.tabs(["🚀 短線飆股 (1個月)", "🌊 中線波段 (半年)", "📅 長線價值 (1年)"])
+
 d1 = (datetime.now() + timedelta(days=30)).strftime("%m/%d")
 d2 = (datetime.now() + timedelta(days=180)).strftime("%m/%d")
 d3 = (datetime.now() + timedelta(days=365)).strftime("%m/%d")
