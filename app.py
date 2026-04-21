@@ -15,72 +15,76 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. 備用清單 (當政府 API 斷線時的保命符) ---
-FALLBACK_STOCKS = [
-    ("2330.TW", "台積電"), ("2317.TW", "鴻海"), ("2454.TW", "聯發科"), ("2382.TW", "廣達"),
-    ("3231.TW", "緯創"), ("2603.TW", "長榮"), ("1519.TW", "華城"), ("0050.TW", "元大台灣50")
+# --- 2. 內建核心熱門股清單 (絕對穩定、不會被政府 API 阻擋) ---
+DEFAULT_STOCKS = [
+    # --- 半導體與 IC 設計 ---
+    ("2330.TW", "台積電"), ("2454.TW", "聯發科"), ("2303.TW", "聯電"), ("3711.TW", "日月光投控"),
+    ("2379.TW", "瑞昱"), ("3034.TW", "聯詠"), ("3661.TW", "世芯-KY"), ("3443.TW", "創意"),
+    ("5274.TWO", "信驊"), ("3529.TWO", "力旺"), ("8299.TWO", "群聯"), ("5347.TWO", "世界先進"),
+    ("6488.TWO", "環球晶"), ("5483.TWO", "中美晶"), ("3105.TWO", "穩懋"), ("4966.TW", "譜瑞-KY"),
+    ("2408.TW", "南亞科"), ("2344.TW", "華邦電"), ("2337.TW", "旺宏"), ("3583.TW", "辛耘"),
+
+    # --- AI 伺服器、代工與電腦周邊 ---
+    ("2317.TW", "鴻海"), ("2382.TW", "廣達"), ("3231.TW", "緯創"), ("6669.TW", "緯穎"),
+    ("2376.TW", "技嘉"), ("2356.TW", "英業達"), ("2357.TW", "華碩"), ("2324.TW", "仁寶"),
+    ("4938.TW", "和碩"), ("8210.TW", "勤誠"), ("3017.TW", "奇鋐"), ("3324.TWO", "雙鴻"), 
+    ("2421.TW", "建準"), ("3037.TW", "欣興"), ("2368.TW", "金像電"), ("2383.TW", "台光電"), 
+    ("6274.TWO", "台燿"), ("4953.TWO", "緯軟"),
+
+    # --- 零組件、光學與車用 ---
+    ("2308.TW", "台達電"), ("3008.TW", "大立光"), ("3406.TW", "玉晶光"), ("2327.TW", "國巨"),
+    ("2492.TW", "華新科"), ("2301.TW", "光寶科"), ("1560.TW", "中砂"), ("3533.TW", "嘉澤"),
+    ("6271.TW", "同欣電"), ("5425.TWO", "台半"), ("8215.TW", "明基材"),
+
+    # --- 重電、綠能與電纜 ---
+    ("1519.TW", "華城"), ("1513.TW", "中興電"), ("1503.TW", "士電"), ("1514.TW", "亞力"),
+    ("1504.TW", "東元"), ("1609.TW", "大亞"), ("1618.TW", "合機"), ("3708.TW", "上緯投控"),
+
+    # --- 航運與傳產龍頭 ---
+    ("2603.TW", "長榮"), ("2609.TW", "陽明"), ("2615.TW", "萬海"), ("2618.TW", "長榮航"),
+    ("2610.TW", "華航"), ("2002.TW", "中鋼"), ("1101.TW", "台泥"), ("1301.TW", "台塑"),
+    ("1303.TW", "南亞"), ("2912.TW", "統一超"), ("1216.TW", "統一"), ("9914.TW", "美利達"),
+
+    # --- 金融保險 ---
+    ("2881.TW", "富邦金"), ("2882.TW", "國泰金"), ("2891.TW", "中信金"), ("2886.TW", "兆豐金"),
+    ("2884.TW", "玉山金"), ("5880.TW", "合庫金"), ("2892.TW", "第一金"), ("2880.TW", "華南金"),
+    ("2885.TW", "元大金"), ("2890.TW", "永豐金"), ("2883.TW", "凱基金"), ("2887.TW", "台新金"),
+
+    # --- 軟體、遊戲與其他 ---
+    ("3293.TWO", "鈊象"), ("8069.TWO", "元太"), ("2453.TW", "凌群"), ("3130.TW", "一零四"),
+    ("5904.TWO", "寶雅"), ("8454.TW", "富邦媒"),
+
+    # --- 熱門高股息與市值型 ETF ---
+    ("0050.TW", "元大台灣50"), ("006208.TW", "富邦台50"), ("0056.TW", "元大高股息"),
+    ("00878.TW", "國泰永續高股息"), ("00919.TW", "群益台灣精選高息"), ("00929.TW", "復華台灣科技優息"),
+    ("00940.TW", "元大台灣價值高息"), ("00713.TW", "元大台灣高息低波"), ("00915.TW", "凱基優選高股息30"),
+    ("00679B.TWO", "元大美債20年"), ("00687B.TW", "國泰20年美債")
 ]
 
-# --- 3. 🌟 核心升級：串接證交所與櫃買中心 Open API 自動抓取真實熱門股 ---
-@st.cache_data(ttl=3600) # 快取 1 小時，避免頻繁呼叫被鎖 IP
-def fetch_dynamic_hot_stocks():
-    stocks = []
-    try:
-        # 1. 抓取上市 (TWSE) 所有股票資訊
-        r_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=5)
-        if r_twse.status_code == 200:
-            for item in r_twse.json():
-                code = str(item.get("Code", ""))
-                name = str(item.get("Name", ""))
-                # 清理成交量字串並轉為整數
-                vol_str = str(item.get("TradeVolume", "0")).replace(',', '')
-                vol = int(vol_str) if vol_str.isdigit() else 0
-                
-                # 過濾掉奇怪的權證，保留一般股票(4碼)與ETF(00開頭)
-                if len(code) == 4 or code.startswith('00'):
-                    stocks.append({"code": f"{code}.TW", "name": name, "vol": vol})
+stock_map_code = {code: name for code, name in DEFAULT_STOCKS}
+stock_map_name = {name: code for code, name in DEFAULT_STOCKS}
+stock_map_simple = {code.split('.')[0]: code for code, name in DEFAULT_STOCKS}
 
-        # 2. 抓取上櫃 (TPEx) 所有股票資訊
-        r_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=5)
-        if r_tpex.status_code == 200:
-            for item in r_tpex.json():
-                code = str(item.get("SecuritiesCompanyCode", ""))
-                name = str(item.get("CompanyName", ""))
-                vol_str = str(item.get("TradingVolume", "0")).replace(',', '')
-                vol = int(vol_str) if vol_str.isdigit() else 0
-                
-                if len(code) == 4 or code.startswith('00'):
-                    stocks.append({"code": f"{code}.TWO", "name": name, "vol": vol})
-
-        # 如果 API 異常沒抓到資料，回傳備用清單
-        if not stocks: 
-            return FALLBACK_STOCKS
-        
-        # 3. 根據成交量 (vol) 由大到小排序，並精準攔截前 100 名！
-        stocks = sorted(stocks, key=lambda x: x['vol'], reverse=True)[:100]
-        return [(s["code"], s["name"]) for s in stocks]
-        
-    except Exception as e:
-        return FALLBACK_STOCKS
-
-# 取得當下最熱門的百大清單
-HOT_STOCKS = fetch_dynamic_hot_stocks()
-
-# 建立搜尋字典 (結合動態熱門股，確保搜尋驗證不會出錯)
-stock_map_code = {code: name for code, name in HOT_STOCKS}
-stock_map_name = {name: code for code, name in HOT_STOCKS}
-stock_map_simple = {code.split('.')[0]: code for code, name in HOT_STOCKS}
-
-# --- 4. 初始化 Session State ---
+# --- 3. 初始化 Session State ---
 if 'watch_list' not in st.session_state:
-    st.session_state.watch_list = {code: name for code, name in HOT_STOCKS}
+    st.session_state.watch_list = {code: name for code, name in DEFAULT_STOCKS}
+
+# 保留使用者自訂的股票，並補齊預設清單
+new_watch_list = {}
+for code, name in DEFAULT_STOCKS:
+    new_watch_list[code] = name
+for code, name in st.session_state.watch_list.items():
+    if code not in new_watch_list:
+        new_watch_list[code] = name
+st.session_state.watch_list = new_watch_list
 
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 5. 大盤技術分析圖 ---
+# --- 4. 大盤技術分析圖 ---
 def render_taiex_ta_chart():
     col_metric, col_controls = st.columns([2, 3])
+    
     with col_controls:
         period_opt = st.radio("選擇週期", ["日線", "週線", "月線"], horizontal=True, label_visibility="collapsed")
     
@@ -96,11 +100,14 @@ def render_taiex_ta_chart():
                 mas = [5, 10, 20, 60, 120, 240]
                 ma_colors = ['#f39c12', '#3498db', '#9b59b6', '#2ecc71', '#e74c3c', '#7f8c8d']
                 
-                for ma in mas: df[f'MA{ma}'] = df['Close'].rolling(window=ma).mean()
+                for ma in mas:
+                    df[f'MA{ma}'] = df['Close'].rolling(window=ma).mean()
                 
-                current, prev_close = df['Close'].iloc[-1], df['Close'].iloc[-2]
+                current = df['Close'].iloc[-1]
+                prev_close = df['Close'].iloc[-2]
                 change = current - prev_close
                 change_pct = (change / prev_close) * 100
+                
                 cur_ma = {ma: df[f'MA{ma}'].iloc[-1] for ma in mas}
                 
                 with col_metric:
@@ -142,20 +149,24 @@ def render_taiex_ta_chart():
                 if period_opt == "日線": x_offset = timedelta(days=5)
                 elif period_opt == "週線": x_offset = timedelta(days=21)
                 else: x_offset = timedelta(days=90)
+                x_max = df.index[-1] + x_offset
                 
                 fig.update_layout(
                     margin=dict(l=10, r=40, t=10, b=10), height=450,
                     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                     xaxis_rangeslider_visible=False, showlegend=False, 
-                    xaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', range=[x_min, df.index[-1] + x_offset], type="date"),
+                    xaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', range=[x_min, x_max], type="date"),
                     yaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', side="right", tickformat=","),
                     hovermode="x unified" 
                 )
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-            else: st.warning("⚠️ 無法取得 Yahoo 報價。")
-        except Exception as e: st.error(f"大盤圖表載入失敗。錯誤: {e}")
+                
+            else:
+                st.warning("⚠️ 無法取得 Yahoo 報價。")
+        except Exception as e:
+            st.error(f"大盤圖表載入失敗，請確認網路連線。錯誤: {e}")
 
-# --- 6. 搜尋邏輯 ---
+# --- 5. 搜尋邏輯 ---
 def search_yahoo_api(query):
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
@@ -168,6 +179,24 @@ def search_yahoo_api(query):
     except: pass
     return None, None
 
+def scrape_yahoo_name(symbol):
+    url = f"https://tw.stock.yahoo.com/quote/{symbol}"
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(url, headers=headers, timeout=3)
+        if r.status_code == 200:
+            match = re.search(r'<title>(.*?)[\(（]', r.text)
+            if match: return match.group(1).strip()
+    except: pass
+    return None
+
+def probe_ticker(symbol):
+    try:
+        t = yf.Ticker(symbol)
+        if not t.history(period="1d").empty: return True
+    except: pass
+    return False
+
 def validate_and_add(query):
     query = query.strip()
     if query in stock_map_name: return stock_map_name[query], query, None
@@ -176,15 +205,24 @@ def validate_and_add(query):
     
     s, n = search_yahoo_api(query)
     if s and n: return s, n, None
+
+    if query.isdigit():
+        for ext in [".TW", ".TWO"]:
+            target = f"{query}{ext}"
+            name = scrape_yahoo_name(target)
+            if name and name != "Yahoo奇摩股市": return target, name, None
+            elif probe_ticker(target): return target, f"{query} ({'上市' if ext=='.TW' else '上櫃'})", None
+
     return None, None, f"找不到「{query}」，請確認代號。"
 
-# --- 7. 技術指標與策略 ---
+# --- 6. 技術指標計算 ---
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
     return 100 - (100 / (1 + gain / loss))
 
+# --- 7. 分析策略 ---
 def analyze_short_term(current_price, ma20, ma60, vol_ratio, rsi):
     if ma60 is None: return "觀察", "tag-hold", 40, "👀 資料不足", 2, current_price
     bias_20 = ((current_price - ma20) / ma20) * 100
@@ -318,9 +356,8 @@ st.title("🚀 台股 AI 趨勢雷達")
 render_taiex_ta_chart()
 st.markdown("---")
 
-# --- 【重點新增】：新增按鈕與表單排版 ---
 with st.container():
-    col_form, col_btn = st.columns([4, 1]) # 表單佔 4 份寬，按鈕佔 1 份
+    col_form, col_btn = st.columns([4, 1]) 
     
     with col_form:
         with st.form(key='add', clear_on_submit=True):
@@ -336,17 +373,11 @@ with st.container():
                     else: st.error(e)
                     
     with col_btn:
-        st.write("") # 為了與左邊對齊
+        st.write("") 
         st.write("")
-        # 點擊此按鈕，強制清除快取並重新抓取證交所最新資料
-        if st.button("🔄 刷新百大熱門股", help="自動向證交所抓取當下成交量前100大股票", use_container_width=True):
-            fetch_dynamic_hot_stocks.clear() # 清空 API 快取
-            fetch_stock_data_wrapper.clear() # 清空 Yahoo 報價快取
-            
-            # 重新取得最新熱門股並覆蓋現有清單
-            new_hot_list = fetch_dynamic_hot_stocks()
-            st.session_state.watch_list = {code: name for code, name in new_hot_list}
-            st.success("已成功更新至最新百大熱門股！")
+        # 穩定版按鈕：將使用者的監控清單，一鍵覆蓋為系統內建的百大板塊清單
+        if st.button("🔄 恢復預設百大清單", help="清除自訂項目，還原為系統內建的百大熱門與ETF清單", use_container_width=True):
+            st.session_state.watch_list = {code: name for code, name in DEFAULT_STOCKS}
             st.rerun()
 
 t1, t2, t3 = st.tabs(["🚀 短線飆股 (1個月)", "🌊 中線波段 (半年)", "📅 長線價值 (1年)"])
