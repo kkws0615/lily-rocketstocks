@@ -15,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. 靜態保底大字典 ---
+# --- 2. 靜態保底百大清單 (確保系統推薦頁面絕對不會空白) ---
 MEGA_STOCKS = [
     ("2330.TW", "台積電"), ("2317.TW", "鴻海"), ("2454.TW", "聯發科"), ("2382.TW", "廣達"), ("2308.TW", "台達電"),
     ("2881.TW", "富邦金"), ("2882.TW", "國泰金"), ("2891.TW", "中信金"), ("2303.TW", "聯電"), ("3711.TW", "日月光投控"),
@@ -36,33 +36,9 @@ MEGA_STOCKS = [
     ("00713.TW", "元大台灣高息低波"), ("00915.TW", "凱基優選高股息30"), ("00679B.TWO", "元大美債20年")
 ]
 
-# --- 3. 嘗試下載全台股字典 ---
-@st.cache_data(ttl=86400)
-def fetch_all_tw_stocks_map():
-    stock_map = {c: n for c, n in MEGA_STOCKS}
-    try:
-        r_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=5)
-        if r_twse.status_code == 200:
-            for item in r_twse.json():
-                c, n = str(item.get("Code", "")).strip(), str(item.get("Name", "")).strip()
-                if c and n: stock_map[f"{c}.TW"] = n
-    except: pass
-    
-    try:
-        r_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=5)
-        if r_tpex.status_code == 200:
-            for item in r_tpex.json():
-                c, n = str(item.get("SecuritiesCompanyCode", "")).strip(), str(item.get("CompanyName", "")).strip()
-                if c and n: stock_map[f"{c}.TWO"] = n
-    except: pass
-    return stock_map
+LOCAL_DICT = {c.split('.')[0]: (c, n) for c, n in MEGA_STOCKS}
 
-ALL_MARKET_DICT = fetch_all_tw_stocks_map()
-LOCAL_DICT_CODE = {c: n for c, n in ALL_MARKET_DICT.items()}
-LOCAL_DICT_NAME = {n: c for c, n in ALL_MARKET_DICT.items()}
-LOCAL_DICT_SIMPLE = {c.split('.')[0]: c for c, n in ALL_MARKET_DICT.items()}
-
-# --- 4. 動態抓取 0050 與 百大熱門股 ---
+# --- 3. 動態抓取 0050 成分股 ---
 @st.cache_data(ttl=86400)
 def fetch_0050_constituents():
     fallback_0050 = MEGA_STOCKS[:50]
@@ -81,6 +57,7 @@ def fetch_0050_constituents():
     except: pass
     return fallback_0050
 
+# --- 4. 動態抓取百大熱門股 ---
 @st.cache_data(ttl=1800)
 def fetch_dynamic_hot_stocks():
     stocks = []
@@ -110,8 +87,7 @@ def fetch_dynamic_hot_stocks():
 
 # --- 5. 初始化 Session State ---
 if 'watch_list' not in st.session_state:
-    base_system_stocks = fetch_0050_constituents() + MEGA_STOCKS[50:]
-    st.session_state.watch_list = {c: n for c, n in base_system_stocks}
+    st.session_state.watch_list = {c: n for c, n in fetch_0050_constituents() + MEGA_STOCKS[50:]}
 
 if 'custom_list' not in st.session_state:
     st.session_state.custom_list = {}
@@ -119,23 +95,30 @@ if 'custom_list' not in st.session_state:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 6. 🌟 五重過濾網搜尋邏輯 (絕對不再漏接) ---
+# --- 6. 🌟 終極實彈盲測搜尋系統 (完全拋棄政府 API 依賴) ---
+def probe_yfinance(symbol):
+    """ 強制往 yfinance 底層撞擊，看有沒有資料 """
+    try:
+        t = yf.Ticker(symbol)
+        hist = t.history(period="1d")
+        if not hist.empty: return True
+    except: pass
+    return False
+
 def search_yahoo_api(query):
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
         r = requests.get(url, params={"query": query, "limit": 5}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
         data = r.json()
         for res in data.get('data', {}).get('result', []):
-            sym = str(res.get('symbol', '')).strip()
+            sym = str(res.get('symbol', '')).strip().upper()
             name = str(res.get('name', '')).strip()
             if query in sym or query in name:
-                # 防呆：避免 .TW 或 .TWO 被重複加上
                 if sym.endswith('.TW') or sym.endswith('.TWO'):
                     return sym, name
-                
                 exch = str(res.get('exchange', '')).upper()
                 if exch == 'TAI': return f"{sym}.TW", name
-                if exch == 'TWO' or 'TPEX' in exch or 'GRE TAI' in exch: return f"{sym}.TWO", name
+                if 'TWO' in exch or 'TPEX' in exch or 'GRE TAI' in exch: return f"{sym}.TWO", name
     except: pass
     return None, None
 
@@ -151,42 +134,42 @@ def scrape_yahoo_name(symbol):
     except: pass
     return None
 
-def probe_yfinance(symbol):
-    try:
-        t = yf.Ticker(symbol)
-        if not t.history(period="1d").empty: return True
-    except: pass
-    return False
-
 def validate_and_add(query):
-    query = query.strip()
+    query = query.strip().upper()
     
-    # 1. 查自選
+    # 1. 檢查是否已經加過了
     for c, n in st.session_state.custom_list.items():
         if query == c or query == n or query == c.split('.')[0]:
             return c, n, None
 
-    # 2. 查本地全市場字典
-    if query in LOCAL_DICT_NAME: return LOCAL_DICT_NAME[query], query, None
-    if query in LOCAL_DICT_CODE: return query, LOCAL_DICT_CODE[query], None
-    if query in LOCAL_DICT_SIMPLE: return LOCAL_DICT_SIMPLE[query], LOCAL_DICT_CODE[LOCAL_DICT_SIMPLE[query]], None
-    
-    # 3. Yahoo API (含防 .TWO.TWO Bug)
-    s, n = search_yahoo_api(query)
-    if s and n: return s, n, None
+    # 2. 檢查保底百大字典 (秒殺常用股)
+    if query in LOCAL_DICT:
+        return LOCAL_DICT[query][0], LOCAL_DICT[query][1], None
 
-    # 4. Yahoo 網頁標題爬蟲 (專治 API 擋人的冷門股)
+    # 3. 呼叫 Yahoo 搜尋並進行「實彈測試」
+    s, n = search_yahoo_api(query)
+    if s and n:
+        if probe_yfinance(s): 
+            return s, n, None
+        # 如果 Yahoo API 給錯市場後綴 (常有的事)，我們幫它對調再測一次！
+        alt_s = s.replace('.TW', '.TWO') if '.TW' in s else s.replace('.TWO', '.TW')
+        if probe_yfinance(alt_s):
+            return alt_s, n, None
+
+    # 4. 純數字代碼盲測 (專治極度冷門股與剛掛牌股)
     if query.isdigit():
         for ext in [".TW", ".TWO"]:
             target = f"{query}{ext}"
-            name = scrape_yahoo_name(target)
-            if name: return target, name, None
-            # 5. Yfinance 暴力破解
-            elif probe_yfinance(target): return target, f"{query} (系統抓取)", None
-            
-    if probe_yfinance(query): return query, query, None
+            if probe_yfinance(target):
+                name = scrape_yahoo_name(target)
+                if name: return target, name, None
+                return target, f"{query} (系統抓取)", None
+                
+    # 5. 美股/國際股直通車 (如 AAPL)
+    if probe_yfinance(query):
+        return query, query, None
 
-    return None, None, f"找不到「{query}」。請確認代號或名稱是否正確。"
+    return None, None, f"在所有市場資料庫中都找不到「{query}」。請確認股票代碼是否正確。"
 
 # --- 7. 大盤技術分析圖 ---
 def render_taiex_ta_chart():
@@ -290,7 +273,7 @@ def render_table(rows, date_label):
     </style>
     <div id="tt"></div>
     <table>
-        <thead><tr><th>代號</th><th>股名</th><th>現價</th><th>漲跌</th><th>目標價({date_label})</th><th>AI評級</th><th>走勢</th></tr></thead>
+        <thead><tr><th>代號</th><th>股名</th><th>現價</th><th>漲跌</th><th>目標價({date_label})</th><th>AI評級</th><th>趨勢</th></tr></thead>
         <tbody>
     """
     for r in rows:
@@ -312,7 +295,7 @@ with st.container():
     with col_form:
         with st.form(key='add_form', clear_on_submit=True):
             c1, c2 = st.columns([4, 1])
-            with c1: query = st.text_input("新增自選股", placeholder="可輸入多筆代號或名稱，請用逗號分隔。例如: 2330, 緯軟, 8040")
+            with c1: query = st.text_input("新增自選股", placeholder="可輸入多筆代號，請用逗號分隔。例如: 2330, 8040, 6789")
             with c2: 
                 if st.form_submit_button("加入自選") and query:
                     queries = [q.strip() for q in query.replace('，', ',').split(',') if q.strip()]
