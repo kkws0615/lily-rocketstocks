@@ -15,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. 靜態保底大字典 (確保系統絕不空白) ---
+# --- 2. 靜態保底大字典 ---
 MEGA_STOCKS = [
     ("2330.TW", "台積電"), ("2317.TW", "鴻海"), ("2454.TW", "聯發科"), ("2382.TW", "廣達"), ("2308.TW", "台達電"),
     ("2881.TW", "富邦金"), ("2882.TW", "國泰金"), ("2891.TW", "中信金"), ("2303.TW", "聯電"), ("3711.TW", "日月光投控"),
@@ -36,7 +36,6 @@ MEGA_STOCKS = [
     ("00713.TW", "元大台灣高息低波"), ("00915.TW", "凱基優選高股息30"), ("00679B.TWO", "元大美債20年")
 ]
 
-# 建立本地快查字典
 LOCAL_DICT_CODE = {c: n for c, n in MEGA_STOCKS}
 LOCAL_DICT_NAME = {n: c for c, n in MEGA_STOCKS}
 LOCAL_DICT_SIMPLE = {c.split('.')[0]: c for c, n in MEGA_STOCKS}
@@ -98,27 +97,32 @@ if 'custom_list' not in st.session_state:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 6. 穩定版搜尋邏輯 (🌟 終極阻擋 .TWO.TWO Bug) ---
+# --- 6. 穩定版搜尋邏輯 (🌟 加入網頁標題爬蟲，解決股名顯示自訂的問題) ---
 def search_yahoo_api(query):
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
         r = requests.get(url, params={"query": query, "limit": 10}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
         data = r.json()
         for res in data.get('data', {}).get('result', []):
-            sym = str(res.get('symbol', '')).strip()
-            name = str(res.get('name', '')).strip()
-            
-            if query in sym or query in name:
-                # 【修復重點】：如果 Yahoo 已經回傳帶有後綴的代碼，直接返回，絕不疊加
-                if sym.endswith('.TW') or sym.endswith('.TWO'):
-                    return sym, name
-                
-                # 如果沒有帶後綴，才判斷市場補上
-                exch = str(res.get('exchange', '')).upper()
-                if exch == 'TAI': return f"{sym}.TW", name
-                if exch == 'TWO' or 'TPEX' in exch or 'GRE TAI' in exch: return f"{sym}.TWO", name
+            if query in res.get('symbol') or query in res.get('name'):
+                if res.get('exchange') in ['TAI', 'TWO']:
+                    suffix = ".TW" if res.get('exchange') == 'TAI' else ".TWO"
+                    return f"{res['symbol']}{suffix}", res['name']
     except: pass
     return None, None
+
+def scrape_yahoo_name(symbol):
+    """ 強制爬取 Yahoo 網頁標題以獲取真實中文股名 """
+    url = f"https://tw.stock.yahoo.com/quote/{symbol}"
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(url, headers=headers, timeout=3)
+        if r.status_code == 200:
+            match = re.search(r'<title>(.*?)[\(（]', r.text)
+            if match and "Yahoo" not in match.group(1):
+                return match.group(1).strip()
+    except: pass
+    return None
 
 def probe_yfinance(symbol):
     try:
@@ -140,15 +144,19 @@ def validate_and_add(query):
     if query in LOCAL_DICT_CODE: return query, LOCAL_DICT_CODE[query], None
     if query in LOCAL_DICT_SIMPLE: return LOCAL_DICT_SIMPLE[query], LOCAL_DICT_CODE[LOCAL_DICT_SIMPLE[query]], None
     
-    # 3. 呼叫 Yahoo API (處理大多數冷門股，已排除 .TWO.TWO)
+    # 3. 呼叫 Yahoo API
     s, n = search_yahoo_api(query)
     if s and n: return s, n, None
 
-    # 4. 暴力探測 yfinance (防呆機制)
+    # 4. 強制網頁標題爬蟲 + yfinance (解決冷門股找不到名字的問題)
     if query.isdigit():
         for ext in [".TW", ".TWO"]:
             target = f"{query}{ext}"
-            if probe_yfinance(target): return target, f"{query} (自訂)", None
+            name = scrape_yahoo_name(target)
+            if name: 
+                return target, name, None
+            elif probe_yfinance(target): 
+                return target, f"{query} (系統抓取)", None
             
     if probe_yfinance(query): return query, query, None
 
@@ -222,7 +230,12 @@ def process_display(stock_dict, strategy="short"):
     rows = []
     for t in tickers:
         try:
-            df = data[t] if len(tickers) > 1 else data
+            # 處理 yfinance 下載單檔與多檔股票的結構差異
+            if isinstance(data.columns, pd.MultiIndex):
+                df = data[t]
+            else:
+                df = data
+                
             closes = df['Close'].dropna()
             if len(closes) < 20: continue
             cur_p, change = closes.iloc[-1], ((closes.iloc[-1]-closes.iloc[-2])/closes.iloc[-2])*100
@@ -247,10 +260,13 @@ def render_table(rows, date_label):
         th {{ background: #f2f2f2; padding: 10px; text-align: left; position: sticky; top: 0; border-bottom: 2px solid #ddd; }}
         td {{ padding: 10px; border-bottom: 1px solid #eee; vertical-align: middle; }}
         .up {{ color: #d62728; font-weight: bold; }} .down {{ color: #2ca02c; font-weight: bold; }}
-        .tag-strong {{ background: #ffebeb; color: #d62728; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
-        .tag-buy {{ background: #e6ffe6; color: #2ca02c; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
-        .tag-hold {{ background: #f8f9fa; color: #666; padding: 4px 8px; border-radius: 4px; }}
+        .tag-strong {{ background: #ffebeb; color: #d62728; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        .tag-buy {{ background: #e6ffe6; color: #2ca02c; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        .tag-sell {{ background: #f1f3f5; color: #495057; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        .tag-hold {{ background: #fff; border: 1px solid #eee; color: #868e96; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        #tt {{ position: fixed; display: none; width: 280px; background: #2c3e50; color: #fff; padding: 12px; border-radius: 8px; z-index: 999; font-size: 13px; line-height: 1.5; pointer-events: none;}}
     </style>
+    <div id="tt"></div>
     <table>
         <thead><tr><th>代號</th><th>股名</th><th>現價</th><th>漲跌</th><th>目標價({date_label})</th><th>AI評級</th><th>趨勢</th></tr></thead>
         <tbody>
@@ -275,7 +291,7 @@ with st.container():
     with col_form:
         with st.form(key='add_form', clear_on_submit=True):
             c1, c2 = st.columns([4, 1])
-            with c1: query = st.text_input("新增自選股", placeholder="可輸入多筆，請用逗號(,)分隔。例如: 2330, 緯軟, 1570")
+            with c1: query = st.text_input("新增自選股", placeholder="可輸入多筆代號或名稱，請用逗號(,)分隔。例如: 2330, 緯軟, 8040")
             with c2: 
                 if st.form_submit_button("加入自選") and query:
                     queries = [q.strip() for q in query.replace('，', ',').split(',') if q.strip()]
@@ -285,7 +301,7 @@ with st.container():
                         s, n, e = validate_and_add(q)
                         if s:
                             st.session_state.custom_list[s] = n
-                            st.session_state.watch_list[s] = n  # 同步總表
+                            st.session_state.watch_list[s] = n  # 同步總表防當機
                             st.session_state.last_added = s
                             has_new = True
                             st.success(f"✅ 已成功將 {n} 加入【我的自選】！")
@@ -295,7 +311,7 @@ with st.container():
                         st.rerun()
     with col_btn:
         st.write("") ; st.write("")
-        if st.button("🔄 刷新系統熱門股", help="更新前三個 Tab 的百大熱門與 0050 名單", use_container_width=True):
+        if st.button("🔄 刷新大盤熱門股", help="更新前三個 Tab 的百大熱門與 0050 名單", use_container_width=True):
             fetch_dynamic_hot_stocks.clear()
             new_hot = fetch_dynamic_hot_stocks()
             if new_hot:
@@ -323,7 +339,7 @@ with t3:
     components.html(render_table(rows, d3), height=600, scrolling=True)
 with t4:
     if not st.session_state.custom_list:
-        st.info("💡 目前沒有自選股。直接在上方的「新增自選股」輸入股票代碼，支援逗號分隔（例如 2330, 1570），即可馬上加入！")
+        st.info("💡 目前沒有自選股。直接在上方的「新增自選股」輸入股票代碼（例如 2330, 8040），即可馬上加入！")
     else:
         col_t4, col_clear = st.columns([5, 1])
         with col_clear:
