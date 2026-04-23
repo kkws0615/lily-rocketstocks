@@ -36,11 +36,6 @@ MEGA_STOCKS = [
     ("00713.TW", "元大台灣高息低波"), ("00915.TW", "凱基優選高股息30"), ("00679B.TWO", "元大美債20年")
 ]
 
-# 建立本地快查字典
-LOCAL_DICT_CODE = {c: n for c, n in MEGA_STOCKS}
-LOCAL_DICT_NAME = {n: c for c, n in MEGA_STOCKS}
-LOCAL_DICT_SIMPLE = {c.split('.')[0]: c for c, n in MEGA_STOCKS}
-
 # --- 3. 動態抓取 0050 成分股 ---
 @st.cache_data(ttl=86400)
 def fetch_0050_constituents():
@@ -92,61 +87,7 @@ def fetch_dynamic_hot_stocks():
 if 'watch_list' not in st.session_state:
     st.session_state.watch_list = {c: n for c, n in fetch_0050_constituents() + MEGA_STOCKS[50:]}
 
-if 'custom_list' not in st.session_state:
-    st.session_state.custom_list = {}
-
-if 'last_added' not in st.session_state:
-    st.session_state.last_added = ""
-
-# --- 6. 穩定版搜尋邏輯 ---
-def search_yahoo_api(query):
-    url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
-    try:
-        r = requests.get(url, params={"query": query, "limit": 10}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
-        data = r.json()
-        for res in data.get('data', {}).get('result', []):
-            if query in res.get('symbol') or query in res.get('name'):
-                if res.get('exchange') in ['TAI', 'TWO']:
-                    suffix = ".TW" if res.get('exchange') == 'TAI' else ".TWO"
-                    return f"{res['symbol']}{suffix}", res['name']
-    except: pass
-    return None, None
-
-def probe_yfinance(symbol):
-    try:
-        t = yf.Ticker(symbol)
-        if not t.history(period="1d").empty: return True
-    except: pass
-    return False
-
-def validate_and_add(query):
-    query = query.strip()
-    
-    # 1. 檢查是否已在自選清單內
-    for c, n in st.session_state.custom_list.items():
-        if query == c or query == n or query == c.split('.')[0]:
-            return c, n, None
-
-    # 2. 檢查本地大字典
-    if query in LOCAL_DICT_NAME: return LOCAL_DICT_NAME[query], query, None
-    if query in LOCAL_DICT_CODE: return query, LOCAL_DICT_CODE[query], None
-    if query in LOCAL_DICT_SIMPLE: return LOCAL_DICT_SIMPLE[query], LOCAL_DICT_CODE[LOCAL_DICT_SIMPLE[query]], None
-    
-    # 3. 呼叫 Yahoo API (處理大多數冷門股)
-    s, n = search_yahoo_api(query)
-    if s and n: return s, n, None
-
-    # 4. 暴力探測 yfinance (防呆機制)
-    if query.isdigit():
-        for ext in [".TW", ".TWO"]:
-            target = f"{query}{ext}"
-            if probe_yfinance(target): return target, f"{query} (自訂)", None
-            
-    if probe_yfinance(query): return query, query, None
-
-    return None, None, f"找不到「{query}」。請確認股票代碼或名稱是否正確。"
-
-# --- 7. 大盤技術分析圖 ---
+# --- 6. 大盤技術分析圖 ---
 def render_taiex_ta_chart():
     col_metric, col_controls = st.columns([2, 3])
     with col_controls:
@@ -182,7 +123,7 @@ def render_taiex_ta_chart():
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         except Exception as e: st.error(f"圖表載入失敗: {e}")
 
-# --- 8. 分析與繪圖組件 ---
+# --- 7. 分析與繪圖組件 ---
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
@@ -239,10 +180,13 @@ def render_table(rows, date_label):
         th {{ background: #f2f2f2; padding: 10px; text-align: left; position: sticky; top: 0; border-bottom: 2px solid #ddd; }}
         td {{ padding: 10px; border-bottom: 1px solid #eee; vertical-align: middle; }}
         .up {{ color: #d62728; font-weight: bold; }} .down {{ color: #2ca02c; font-weight: bold; }}
-        .tag-strong {{ background: #ffebeb; color: #d62728; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
-        .tag-buy {{ background: #e6ffe6; color: #2ca02c; padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
-        .tag-hold {{ background: #f8f9fa; color: #666; padding: 4px 8px; border-radius: 4px; }}
+        .tag-strong {{ background: #ffebeb; color: #d62728; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        .tag-buy {{ background: #e6ffe6; color: #2ca02c; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        .tag-sell {{ background: #f1f3f5; color: #495057; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        .tag-hold {{ background: #fff; border: 1px solid #eee; color: #868e96; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
+        #tt {{ position: fixed; display: none; width: 280px; background: #2c3e50; color: #fff; padding: 12px; border-radius: 8px; z-index: 999; font-size: 13px; line-height: 1.5; pointer-events: none;}}
     </style>
+    <div id="tt"></div>
     <table>
         <thead><tr><th>代號</th><th>股名</th><th>現價</th><th>漲跌</th><th>目標價({date_label})</th><th>AI評級</th><th>趨勢</th></tr></thead>
         <tbody>
@@ -256,45 +200,29 @@ def render_table(rows, date_label):
         html += f"<tr><td><a href='{r['url']}' target='_blank'>{r['code']}</a></td><td>{r['name']}</td><td class='{color}'>{r['price']:.1f}</td><td class='{color}'>{r['change']:.2f}%</td><td>{r['target']:.1f}</td><td><span class='{r['cls']}'>{r['rating']}</span><br><small>{r['reason']}</small></td><td>{spark}</td></tr>"
     return html + "</tbody></table>"
 
-# --- 9. 主介面佈局 ---
+# --- 8. 主介面佈局 ---
 st.title("🚀 台股 AI 趨勢雷達")
 render_taiex_ta_chart()
 st.markdown("---")
 
-# 新增自選股與系統更新區域
-with st.container():
-    col_form, col_btn = st.columns([4, 1])
-    with col_form:
-        with st.form(key='add_form', clear_on_submit=True):
-            c1, c2 = st.columns([4, 1])
-            with c1: query = st.text_input("新增自選股", placeholder="輸入代號 (如 2330, 1570) 或 名稱")
-            with c2: 
-                if st.form_submit_button("加入自選"):
-                    s, n, e = validate_and_add(query)
-                    if s:
-                        st.session_state.custom_list[s] = n
-                        st.success(f"✅ 已成功將 {n} 加入【我的自選】！")
-                        st.rerun()
-                    else: st.error(e)
-    with col_btn:
-        st.write("") ; st.write("")
-        if st.button("🔄 刷新系統熱門股", help="更新前三個 Tab 的百大熱門與 0050 名單", use_container_width=True):
-            fetch_dynamic_hot_stocks.clear()
-            new_hot = fetch_dynamic_hot_stocks()
-            if new_hot:
-                st.session_state.watch_list = {c: n for c, n in new_hot}
-                st.success("✅ 已更新為當下百大熱門股！")
-            else:
-                st.warning("⚠️ 網路阻擋，維持現有 0050 與熱門清單。")
-            st.rerun()
-            
-        if st.button("🗑️ 清空自選", help="清空第四個 Tab 的自訂股票", use_container_width=True):
-            st.session_state.custom_list = {}
-            st.success("已清空自選清單！")
-            st.rerun()
+# 刷新系統熱門股按鈕置中顯示
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    if st.button("🔄 刷新當下熱門股", help="自動向證交所抓取當下最新成交量排名的100檔標的", use_container_width=True):
+        fetch_dynamic_hot_stocks.clear()
+        new_hot = fetch_dynamic_hot_stocks()
+        if new_hot:
+            st.session_state.watch_list = {c: n for c, n in new_hot}
+            st.success("✅ 已成功連線，更新為當下百大熱門股！")
+        else:
+            st.session_state.watch_list = {c: n for c, n in MEGA_STOCKS}
+            st.warning("⚠️ 連線證交所失敗，已為您重置為內建的完整百大強勢股清單。")
+        st.rerun()
 
-# 分頁顯示
-t1, t2, t3, t4 = st.tabs(["🚀 短線飆股 (系統)", "🌊 中線波段 (系統)", "📅 長線價值 (系統)", "⭐ 我的自選"])
+st.write("") # 增加點留白
+
+# 分頁顯示 (移除第四個自選 Tab)
+t1, t2, t3 = st.tabs(["🚀 短線飆股 (1個月)", "🌊 中線波段 (半年)", "📅 長線價值 (1年)"])
 
 d1 = (datetime.now() + timedelta(days=30)).strftime("%m/%d")
 d2 = (datetime.now() + timedelta(days=180)).strftime("%m/%d")
@@ -309,9 +237,3 @@ with t2:
 with t3:
     rows = process_display(st.session_state.watch_list, "year")
     components.html(render_table(rows, d3), height=600, scrolling=True)
-with t4:
-    if not st.session_state.custom_list:
-        st.info("💡 目前沒有自選股。直接在上方的「新增自選股」輸入股票代碼（例如 2330 或 1570），即可馬上加入！")
-    else:
-        rows = process_display(st.session_state.custom_list, "short")
-        components.html(render_table(rows, d1), height=600, scrolling=True)
