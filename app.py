@@ -36,11 +36,38 @@ MEGA_STOCKS = [
     ("00713.TW", "元大台灣高息低波"), ("00915.TW", "凱基優選高股息30"), ("00679B.TWO", "元大美債20年")
 ]
 
-LOCAL_DICT_CODE = {c: n for c, n in MEGA_STOCKS}
-LOCAL_DICT_NAME = {n: c for c, n in MEGA_STOCKS}
-LOCAL_DICT_SIMPLE = {c.split('.')[0]: c for c, n in MEGA_STOCKS}
+# --- 🌟 3. 終極解決方案：下載全台股上市櫃字典 (開除 Yahoo 搜尋) ---
+@st.cache_data(ttl=86400) # 每天更新一次全市場名單
+def fetch_all_tw_stocks_map():
+    stock_map = {c: n for c, n in MEGA_STOCKS} # 先墊底保底清單
+    
+    # 抓取證交所 (上市) 所有股票
+    try:
+        r_twse = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=5)
+        if r_twse.status_code == 200:
+            for item in r_twse.json():
+                c, n = str(item.get("Code", "")).strip(), str(item.get("Name", "")).strip()
+                if c and n: stock_map[f"{c}.TW"] = n
+    except: pass
+    
+    # 抓取櫃買中心 (上櫃) 所有股票
+    try:
+        r_tpex = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=5)
+        if r_tpex.status_code == 200:
+            for item in r_tpex.json():
+                c, n = str(item.get("SecuritiesCompanyCode", "")).strip(), str(item.get("CompanyName", "")).strip()
+                if c and n: stock_map[f"{c}.TWO"] = n
+    except: pass
+    
+    return stock_map
 
-# --- 3. 動態抓取 0050 成分股 ---
+# 建立全局全市場快查字典
+ALL_MARKET_DICT = fetch_all_tw_stocks_map()
+LOCAL_DICT_CODE = {c: n for c, n in ALL_MARKET_DICT.items()}
+LOCAL_DICT_NAME = {n: c for c, n in ALL_MARKET_DICT.items()}
+LOCAL_DICT_SIMPLE = {c.split('.')[0]: c for c, n in ALL_MARKET_DICT.items()}
+
+# --- 4. 動態抓取 0050 成分股 ---
 @st.cache_data(ttl=86400)
 def fetch_0050_constituents():
     fallback_0050 = MEGA_STOCKS[:50]
@@ -59,7 +86,7 @@ def fetch_0050_constituents():
     except: pass
     return fallback_0050
 
-# --- 4. 動態抓取百大熱門股 ---
+# --- 5. 動態抓取百大熱門股 ---
 @st.cache_data(ttl=1800)
 def fetch_dynamic_hot_stocks():
     stocks = []
@@ -87,9 +114,11 @@ def fetch_dynamic_hot_stocks():
         return [(s["code"], s["name"]) for s in stocks]
     except: return None
 
-# --- 5. 初始化 Session State ---
+# --- 6. 初始化 Session State ---
 if 'watch_list' not in st.session_state:
-    st.session_state.watch_list = {c: n for c, n in fetch_0050_constituents() + MEGA_STOCKS[50:]}
+    # 預設：0050動態名單 + MEGA_STOCKS後段(中小型/ETF)
+    base_system_stocks = fetch_0050_constituents() + MEGA_STOCKS[50:]
+    st.session_state.watch_list = {c: n for c, n in base_system_stocks}
 
 if 'custom_list' not in st.session_state:
     st.session_state.custom_list = {}
@@ -97,33 +126,7 @@ if 'custom_list' not in st.session_state:
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# --- 6. 穩定版搜尋邏輯 (🌟 加入網頁標題爬蟲，解決股名顯示自訂的問題) ---
-def search_yahoo_api(query):
-    url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
-    try:
-        r = requests.get(url, params={"query": query, "limit": 10}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
-        data = r.json()
-        for res in data.get('data', {}).get('result', []):
-            if query in res.get('symbol') or query in res.get('name'):
-                if res.get('exchange') in ['TAI', 'TWO']:
-                    suffix = ".TW" if res.get('exchange') == 'TAI' else ".TWO"
-                    return f"{res['symbol']}{suffix}", res['name']
-    except: pass
-    return None, None
-
-def scrape_yahoo_name(symbol):
-    """ 強制爬取 Yahoo 網頁標題以獲取真實中文股名 """
-    url = f"https://tw.stock.yahoo.com/quote/{symbol}"
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get(url, headers=headers, timeout=3)
-        if r.status_code == 200:
-            match = re.search(r'<title>(.*?)[\(（]', r.text)
-            if match and "Yahoo" not in match.group(1):
-                return match.group(1).strip()
-    except: pass
-    return None
-
+# --- 7. 完美驗證與加入邏輯 ---
 def probe_yfinance(symbol):
     try:
         t = yf.Ticker(symbol)
@@ -139,30 +142,18 @@ def validate_and_add(query):
         if query == c or query == n or query == c.split('.')[0]:
             return c, n, None
 
-    # 2. 檢查本地大字典
+    # 2. 🌟 秒查全市場字典 (上市+上櫃所有股票都在這裡，絕對不會找不到)
     if query in LOCAL_DICT_NAME: return LOCAL_DICT_NAME[query], query, None
     if query in LOCAL_DICT_CODE: return query, LOCAL_DICT_CODE[query], None
     if query in LOCAL_DICT_SIMPLE: return LOCAL_DICT_SIMPLE[query], LOCAL_DICT_CODE[LOCAL_DICT_SIMPLE[query]], None
     
-    # 3. 呼叫 Yahoo API
-    s, n = search_yahoo_api(query)
-    if s and n: return s, n, None
+    # 3. 處理美股或國際市場 (因為字典只有台股，所以加上 yfinance 盲測保底)
+    if query.isalpha() or query.endswith(".TW") or query.endswith(".TWO"):
+        if probe_yfinance(query): return query, f"{query} (國際/自訂)", None
 
-    # 4. 強制網頁標題爬蟲 + yfinance (解決冷門股找不到名字的問題)
-    if query.isdigit():
-        for ext in [".TW", ".TWO"]:
-            target = f"{query}{ext}"
-            name = scrape_yahoo_name(target)
-            if name: 
-                return target, name, None
-            elif probe_yfinance(target): 
-                return target, f"{query} (系統抓取)", None
-            
-    if probe_yfinance(query): return query, query, None
+    return None, None, f"找不到「{query}」。請確認代號或名稱是否正確（若為美股請直接輸入代號如 AAPL）。"
 
-    return None, None, f"找不到「{query}」。請確認股票代碼或名稱是否正確。"
-
-# --- 7. 大盤技術分析圖 ---
+# --- 8. 大盤技術分析圖 ---
 def render_taiex_ta_chart():
     col_metric, col_controls = st.columns([2, 3])
     with col_controls:
@@ -198,7 +189,7 @@ def render_taiex_ta_chart():
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         except Exception as e: st.error(f"圖表載入失敗: {e}")
 
-# --- 8. 分析與繪圖組件 ---
+# --- 9. 分析與繪圖組件 ---
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
@@ -230,11 +221,8 @@ def process_display(stock_dict, strategy="short"):
     rows = []
     for t in tickers:
         try:
-            # 處理 yfinance 下載單檔與多檔股票的結構差異
-            if isinstance(data.columns, pd.MultiIndex):
-                df = data[t]
-            else:
-                df = data
+            if isinstance(data.columns, pd.MultiIndex): df = data[t]
+            else: df = data
                 
             closes = df['Close'].dropna()
             if len(closes) < 20: continue
@@ -245,7 +233,6 @@ def process_display(stock_dict, strategy="short"):
             v_ratio = vols.iloc[-1] / vols.rolling(5).mean().iloc[-1] if len(vols) >= 5 else 1.0
             
             rating, cls, score, reason, target = analyze_logic(cur_p, ma[0], ma[1], ma[2], ma[3], v_ratio, rsi, strategy)
-            
             hist_len = 60 if strategy=="short" else (120 if strategy=="medium" else 240)
             trend_data = closes.iloc[-hist_len:].tolist()
             
@@ -257,7 +244,7 @@ def render_table(rows, date_label):
     html = f"""
     <style>
         table {{ width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 14px; }}
-        th {{ background: #f2f2f2; padding: 10px; text-align: left; position: sticky; top: 0; border-bottom: 2px solid #ddd; }}
+        th {{ background: #f2f2f2; padding: 10px; text-align: left; position: sticky; top: 0; border-bottom: 2px solid #ddd; z-index: 10; }}
         td {{ padding: 10px; border-bottom: 1px solid #eee; vertical-align: middle; }}
         .up {{ color: #d62728; font-weight: bold; }} .down {{ color: #2ca02c; font-weight: bold; }}
         .tag-strong {{ background: #ffebeb; color: #d62728; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-align: center; display: inline-block; min-width: 60px;}}
@@ -268,7 +255,7 @@ def render_table(rows, date_label):
     </style>
     <div id="tt"></div>
     <table>
-        <thead><tr><th>代號</th><th>股名</th><th>現價</th><th>漲跌</th><th>目標價({date_label})</th><th>AI評級</th><th>趨勢</th></tr></thead>
+        <thead><tr><th>代號</th><th>股名</th><th>現價</th><th>漲跌</th><th>目標價({date_label})</th><th>AI評級</th><th>走勢</th></tr></thead>
         <tbody>
     """
     for r in rows:
@@ -280,31 +267,29 @@ def render_table(rows, date_label):
         html += f"<tr><td><a href='{r['url']}' target='_blank'>{r['code']}</a></td><td>{r['name']}</td><td class='{color}'>{r['price']:.1f}</td><td class='{color}'>{r['change']:.2f}%</td><td>{r['target']:.1f}</td><td><span class='{r['cls']}'>{r['rating']}</span><br><small>{r['reason']}</small></td><td>{spark}</td></tr>"
     return html + "</tbody></table>"
 
-# --- 9. 主介面佈局 ---
+# --- 10. 主介面佈局 ---
 st.title("🚀 台股 AI 趨勢雷達")
 render_taiex_ta_chart()
 st.markdown("---")
 
-# 新增自選股與系統更新區域
 with st.container():
     col_form, col_btn = st.columns([4, 1])
     with col_form:
         with st.form(key='add_form', clear_on_submit=True):
             c1, c2 = st.columns([4, 1])
-            with c1: query = st.text_input("新增自選股", placeholder="可輸入多筆代號或名稱，請用逗號(,)分隔。例如: 2330, 緯軟, 8040")
+            with c1: query = st.text_input("新增自選股", placeholder="可輸入多筆代號或名稱，請用逗號(,)分隔。例如: 2330, 8040, 6789")
             with c2: 
                 if st.form_submit_button("加入自選") and query:
                     queries = [q.strip() for q in query.replace('，', ',').split(',') if q.strip()]
                     has_new = False
-                    
                     for q in queries:
                         s, n, e = validate_and_add(q)
                         if s:
                             st.session_state.custom_list[s] = n
-                            st.session_state.watch_list[s] = n  # 同步總表防當機
+                            st.session_state.watch_list[s] = n
                             st.session_state.last_added = s
                             has_new = True
-                            st.success(f"✅ 已成功將 {n} 加入【我的自選】！")
+                            st.success(f"✅ 已成功將 {n} ({s.split('.')[0]}) 加入自選！")
                         else:
                             st.error(f"❌ {q}：{e}")
                     if has_new:
@@ -318,10 +303,12 @@ with st.container():
                 st.session_state.watch_list = {c: n for c, n in new_hot}
                 st.success("✅ 已更新為當下百大熱門股！")
             else:
+                base_system = fetch_0050_constituents() + MEGA_STOCKS[50:]
+                st.session_state.watch_list = {c: n for c, n in base_system}
                 st.warning("⚠️ 網路阻擋，維持現有 0050 與熱門清單。")
             st.rerun()
 
-# 分頁顯示
+# --- 分頁顯示區 ---
 t1, t2, t3, t4 = st.tabs(["🚀 短線飆股 (系統)", "🌊 中線波段 (系統)", "📅 長線價值 (系統)", "⭐ 我的自選"])
 
 d1 = (datetime.now() + timedelta(days=30)).strftime("%m/%d")
@@ -339,7 +326,7 @@ with t3:
     components.html(render_table(rows, d3), height=600, scrolling=True)
 with t4:
     if not st.session_state.custom_list:
-        st.info("💡 目前沒有自選股。直接在上方的「新增自選股」輸入股票代碼（例如 2330, 8040），即可馬上加入！")
+        st.info("💡 目前沒有自選股。請在上方輸入股票代碼（例如 8040, 6789），系統將秒查全市場資料庫加入自選！")
     else:
         col_t4, col_clear = st.columns([5, 1])
         with col_clear:
