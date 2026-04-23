@@ -15,10 +15,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. 動態抓取 0050 成分股 (🌟 本次核心升級) ---
-@st.cache_data(ttl=86400) # 快取 24 小時 (ETF成分股不需要每分鐘抓)
+# --- 2. 動態抓取 0050 成分股 ---
+@st.cache_data(ttl=86400) # 快取 24 小時
 def fetch_0050_constituents():
-    # 完美備案：若 API 遭阻擋，使用最新一季的 50 大權值股保底
     fallback_0050 = [
         ("2330.TW", "台積電"), ("2317.TW", "鴻海"), ("2454.TW", "聯發科"), ("2382.TW", "廣達"), ("2308.TW", "台達電"),
         ("2881.TW", "富邦金"), ("2882.TW", "國泰金"), ("2891.TW", "中信金"), ("2303.TW", "聯電"), ("3711.TW", "日月光投控"),
@@ -33,47 +32,35 @@ def fetch_0050_constituents():
     ]
     
     try:
-        # 嘗試串接投信公開 API 獲取 0050 (fundid=1066) 最新持股
         url = "https://www.yuantaetfs.com/api/StkWeights?date=&fundid=1066"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         r = requests.get(url, headers=headers, timeout=5)
         
         if r.status_code == 200:
             data = r.json()
             dynamic_0050 = []
             for item in data:
-                # 投信 API 通常會回傳 stkCd (代號) 與 stkNm (名稱)
                 code = str(item.get("stkCd", "")).strip()
                 name = str(item.get("stkNm", "")).strip()
                 if code and name and code.isdigit():
                     dynamic_0050.append((f"{code}.TW", name))
-            
-            # 確保有成功抓到足夠數量的成分股 (至少 40 檔以上才算成功)
             if len(dynamic_0050) >= 40:
                 return dynamic_0050
-    except Exception as e:
-        pass # 發生超時或阻擋時，靜默失敗並回傳備用清單
-        
+    except: pass
     return fallback_0050
 
 # --- 3. 基礎中小型熱門股與 ETF 清單 ---
 OTHER_HOT_STOCKS = [
-    # 🔥 中小型熱門飆股 (上櫃/中型)
     ("4953.TWO", "緯軟"), ("3293.TWO", "鈊象"), ("5274.TWO", "信驊"), ("3529.TWO", "力旺"), ("8299.TWO", "群聯"), 
     ("5347.TWO", "世界先進"), ("6488.TWO", "環球晶"), ("5483.TWO", "中美晶"), ("3105.TWO", "穩懋"), ("3324.TWO", "雙鴻"), 
     ("6274.TWO", "台燿"), ("8069.TWO", "元太"), ("2453.TW", "凌群"), ("1618.TW", "合機"), ("1513.TW", "中興電"),
     ("1503.TW", "士電"), ("1514.TW", "亞力"), ("3583.TW", "辛耘"), ("8210.TW", "勤誠"), ("3533.TW", "嘉澤"),
-
-    # 💰 熱門高股息與市值型 ETF
     ("0050.TW", "元大台灣50"), ("006208.TW", "富邦台50"), ("0056.TW", "元大高股息"), ("00878.TW", "國泰永續高股息"), 
     ("00919.TW", "群益台灣精選高息"), ("00929.TW", "復華台灣科技優息"), ("00940.TW", "元大台灣價值高息"), 
-    ("00713.TW", "元大台灣高息低波"), ("00915.TW", "凱基優選高股息30"), ("00679B.TWO", "元大美債20年"), ("00687B.TW", "國泰20年美債")
+    ("00713.TW", "元大台灣高息低波"), ("00915.TW", "凱基優選高股息30"), ("00679B.TWO", "元大美債20年")
 ]
 
-# 組合：動態 0050 成分股 + 其他熱門股
 BASE_STOCKS = fetch_0050_constituents() + OTHER_HOT_STOCKS
-
-# 建立搜尋字典
 ALL_STOCKS_MAP = {c: n for c, n in BASE_STOCKS}
 
 # --- 4. 動態抓取政府 API 邏輯 (百大成交量熱門股) ---
@@ -102,22 +89,19 @@ def fetch_dynamic_hot_stocks():
         if not stocks: return None
         stocks = sorted(stocks, key=lambda x: x['vol'], reverse=True)[:100]
         return [(s["code"], s["name"]) for s in stocks]
-    except:
-        return None
+    except: return None
 
 # --- 5. 初始化 Session State ---
 if 'watch_list' not in st.session_state:
     st.session_state.watch_list = ALL_STOCKS_MAP.copy()
 
-# 【新增】：建立專屬自選股的儲存空間
+# 【新增】：獨立儲存自選股的空間
 if 'custom_list' not in st.session_state:
     st.session_state.custom_list = {}
 
 if 'last_added' not in st.session_state:
     st.session_state.last_added = ""
 
-# 更新搜尋字典包含使用者自訂項目
-ALL_STOCKS_MAP.update(st.session_state.watch_list)
 stock_map_code = {code: name for code, name in ALL_STOCKS_MAP.items()}
 stock_map_name = {name: code for code, name in ALL_STOCKS_MAP.items()}
 stock_map_simple = {code.split('.')[0]: code for code, name in ALL_STOCKS_MAP.items()}
@@ -125,10 +109,8 @@ stock_map_simple = {code.split('.')[0]: code for code, name in ALL_STOCKS_MAP.it
 # --- 6. 大盤技術分析圖 ---
 def render_taiex_ta_chart():
     col_metric, col_controls = st.columns([2, 3])
-    
     with col_controls:
         period_opt = st.radio("選擇週期", ["日線", "週線", "月線"], horizontal=True, label_visibility="collapsed")
-    
     with st.container():
         try:
             if period_opt == "日線": df = yf.download("^TWII", period="2y", interval="1d", progress=False)
@@ -140,24 +122,16 @@ def render_taiex_ta_chart():
                 
                 mas = [5, 10, 20, 60, 120, 240]
                 ma_colors = ['#f39c12', '#3498db', '#9b59b6', '#2ecc71', '#e74c3c', '#7f8c8d']
-                
-                for ma in mas:
-                    df[f'MA{ma}'] = df['Close'].rolling(window=ma).mean()
+                for ma in mas: df[f'MA{ma}'] = df['Close'].rolling(window=ma).mean()
                 
                 current = df['Close'].iloc[-1]
                 prev_close = df['Close'].iloc[-2]
                 change = current - prev_close
                 change_pct = (change / prev_close) * 100
-                
                 cur_ma = {ma: df[f'MA{ma}'].iloc[-1] for ma in mas}
                 
                 with col_metric:
-                    st.metric(
-                        label=f"台灣加權指數 ({period_opt})", 
-                        value=f"{current:,.0f}", 
-                        delta=f"{change:,.0f} ({change_pct:.2f}%)",
-                        delta_color="inverse"
-                    )
+                    st.metric(label=f"台灣加權指數 ({period_opt})", value=f"{current:,.0f}", delta=f"{change:,.0f} ({change_pct:.2f}%)", delta_color="inverse")
                 
                 ma_html = f"""
                 <div style="font-family: 'Microsoft JhengHei', sans-serif; font-size: 14px; margin-bottom: 5px; padding: 10px; background-color: #f8f9fa; border-radius: 8px; font-weight: bold;">
@@ -174,39 +148,28 @@ def render_taiex_ta_chart():
                 fig = go.Figure()
                 fig.add_trace(go.Candlestick(
                     x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-                    name='K線', increasing_line_color='#dc3545', increasing_fillcolor='#dc3545', 
-                    decreasing_line_color='#28a745', decreasing_fillcolor='#28a745'  
+                    name='K線', increasing_line_color='#dc3545', increasing_fillcolor='#dc3545', decreasing_line_color='#28a745', decreasing_fillcolor='#28a745'  
                 ))
-                
                 for ma, color in zip(mas, ma_colors):
-                    fig.add_trace(go.Scatter(
-                        x=df.index, y=df[f'MA{ma}'], mode='lines', name=f'MA{ma}',
-                        line=dict(color=color, width=1.2), hoverinfo='y' 
-                    ))
+                    fig.add_trace(go.Scatter(x=df.index, y=df[f'MA{ma}'], mode='lines', name=f'MA{ma}', line=dict(color=color, width=1.2), hoverinfo='y'))
                 
                 visible_points = 150 
                 x_min = df.index[-visible_points] if len(df) > visible_points else df.index[0]
-                
                 if period_opt == "日線": x_offset = timedelta(days=5)
                 elif period_opt == "週線": x_offset = timedelta(days=21)
                 else: x_offset = timedelta(days=90)
-                x_max = df.index[-1] + x_offset
                 
                 fig.update_layout(
-                    margin=dict(l=10, r=40, t=10, b=10), height=450,
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=10, r=40, t=10, b=10), height=450, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                     xaxis_rangeslider_visible=False, showlegend=False, 
-                    xaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', range=[x_min, x_max], type="date"),
-                    yaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', side="right", tickformat=","),
-                    hovermode="x unified" 
+                    xaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', range=[x_min, df.index[-1] + x_offset], type="date"),
+                    yaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', side="right", tickformat=","), hovermode="x unified" 
                 )
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-            else:
-                st.warning("⚠️ 無法取得 Yahoo 報價。")
-        except Exception as e:
-            st.error(f"大盤圖表載入失敗，請確認網路連線。錯誤: {e}")
+            else: st.warning("⚠️ 無法取得 Yahoo 報價。")
+        except Exception as e: st.error(f"大盤圖表載入失敗，請確認網路連線。錯誤: {e}")
 
-# --- 7. 搜尋邏輯 (原封不動，不准動！) ---
+# --- 7. 搜尋邏輯 (完全保留您的原始版本) ---
 def search_yahoo_api(query):
     url = "https://tw.stock.yahoo.com/_td-stock/api/resource/AutocompleteService"
     try:
@@ -306,9 +269,9 @@ def fetch_stock_data_wrapper(tickers):
     if not tickers: return None
     return yf.download(tickers, period="2y", group_by='ticker', progress=False)
 
-# 【修改】：讓 process_stock_data 支援傳入指定的股票字典 (為了切換自選與系統)
-def process_stock_data(strategy_type="short", custom_dict=None):
-    current_map = custom_dict if custom_dict is not None else st.session_state.watch_list
+def process_stock_data(strategy_type="short", target_dict=None):
+    # 【修改】：支援傳入指定的字典 (區分自選股與大盤股)
+    current_map = target_dict if target_dict is not None else st.session_state.watch_list
     tickers = list(current_map.keys())
     if not tickers: return []
 
@@ -318,7 +281,12 @@ def process_stock_data(strategy_type="short", custom_dict=None):
     rows = []
     for ticker in tickers:
         try:
-            df = data_download[ticker] if len(tickers) > 1 else data_download
+            # 【🌟 終極修復】：完美處理單一股票與多檔股票的資料結構差異
+            if isinstance(data_download.columns, pd.MultiIndex):
+                df = data_download[ticker]
+            else:
+                df = data_download
+                
             closes = df['Close'].dropna()
             if len(closes) < 20: continue
             
@@ -409,47 +377,48 @@ with st.container():
     with col_form:
         with st.form(key='add', clear_on_submit=True):
             c1, c2 = st.columns([4, 1])
-            # 【重點修改】：支援多筆輸入，提示文字更新
-            with c1: query = st.text_input("新增自選股", placeholder="可輸入多筆代號或名稱，請用逗號(,)分隔。例如: 2330, 緯軟, 0050")
+            with c1: query = st.text_input("新增自選股", placeholder="支援多筆輸入，請用逗號(,)分隔。例如: 2330, 緯軟, 0050")
             with c2: 
                 if st.form_submit_button("加入自選") and query:
-                    # 處理逗號分隔邏輯 (支援全形或半形逗號)
+                    # 處理多組字串，支援全半形逗號
                     queries = [q.strip() for q in query.replace('，', ',').split(',') if q.strip()]
                     has_new = False
                     
                     for q in queries:
                         s, n, e = validate_and_add(q)
                         if s: 
-                            # 加入專屬自選清單
-                            st.session_state.custom_list[s] = n
-                            # 同步加入總清單(避免驗證與底層邏輯衝突)
-                            st.session_state.watch_list[s] = n 
+                            st.session_state.custom_list[s] = n # 加入自選 Tab
+                            st.session_state.watch_list[s] = n  # 同步加入大清單(以利驗證)
                             st.session_state.last_added = s
                             has_new = True
-                            st.success(f"✅ 成功加入：{n}")
+                            st.success(f"✅ 成功將 {n} 加入自選清單！")
                         else: 
                             st.error(f"❌ {q}：{e}")
-                            
                     if has_new:
                         st.rerun()
                     
     with col_btn:
         st.write("") 
         st.write("")
-        if st.button("🔄 刷新大盤熱門股", help="自動向證交所抓取當下成交量前100大股票", use_container_width=True):
+        if st.button("🔄 刷新大盤熱門股", help="更新下方大盤系統清單", use_container_width=True):
             fetch_dynamic_hot_stocks.clear() 
             fetch_stock_data_wrapper.clear() 
             
             new_hot_list = fetch_dynamic_hot_stocks()
             if new_hot_list:
                 st.session_state.watch_list = {code: name for code, name in new_hot_list}
-                st.success("✅ 已成功連線證交所，更新至今日最新百大熱門股！")
+                st.success("✅ 已更新至今日最新百大熱門股！")
             else:
                 st.session_state.watch_list = {code: name for code, name in BASE_STOCKS}
-                st.warning("⚠️ 證交所 API 連線不穩，已為您切換至【0050成分股與熱門飆股】清單。")
+                st.warning("⚠️ 證交所 API 連線不穩，已切換至【0050成分股與熱門飆股】清單。")
+            st.rerun()
+            
+        if st.button("🗑️ 清空自選清單", help="清空我的自選分頁", use_container_width=True):
+            st.session_state.custom_list = {}
+            st.success("已清空自選清單！")
             st.rerun()
 
-# 【重點修改】：新增第四個 Tab 給自選股
+# --- 分頁顯示區 (新增第四個 Tab) ---
 t1, t2, t3, t4 = st.tabs(["🚀 短線飆股 (系統)", "🌊 中線波段 (系統)", "📅 長線價值 (系統)", "⭐ 我的自選"])
 
 d1 = (datetime.now() + timedelta(days=30)).strftime("%m/%d")
@@ -465,24 +434,13 @@ with t2:
 with t3:
     rows = process_stock_data("year", st.session_state.watch_list)
     components.html(render_table(rows, d3, "近1年"), height=600, scrolling=True)
-
-# 【重點修改】：我的自選分頁邏輯
 with t4:
     if not st.session_state.custom_list:
-        st.info("💡 目前沒有自選股。請在上方輸入股票代號或名稱，即可加入自選清單！")
+        st.info("💡 目前沒有自選股。請在上方輸入股票代號或名稱，即可馬上加入！")
     else:
-        # 加上一個可以清空自選股的按鈕
-        col_t4, col_clear = st.columns([5, 1])
-        with col_clear:
-            if st.button("🗑️ 清空自選清單", use_container_width=True):
-                st.session_state.custom_list = {}
-                st.rerun()
-                
-        # 顯示自選股 (預設使用短線分析邏輯來呈現，可自行調整)
+        # 將 custom_list 傳入計算，解決單檔股票當機的問題
         rows = process_stock_data("short", st.session_state.custom_list)
-        components.html(render_table(rows, d1, "近3月"), height=550, scrolling=True)
-
-
+        components.html(render_table(rows, d1, "近3月"), height=600, scrolling=True)
 
 # import streamlit as st
 # import streamlit.components.v1 as components
