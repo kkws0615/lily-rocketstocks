@@ -66,7 +66,7 @@ def get_gsheet_client():
 def get_worksheet():
     """取得工作表，若分頁不存在則自動建立並加上標題列"""
     client = get_gsheet_client()
-    sheet = client.open_by_key(st.secrets["SHEET_ID"])
+    sheet = client.open_by_key(st.secrets["gcp_service_account"]["SHEET_ID"])
     try:
         ws = sheet.worksheet("watchlist")
     except gspread.WorksheetNotFound:
@@ -552,11 +552,6 @@ with t4:
 
         rows = process_display(st.session_state.custom_list, "short")
         components.html(render_table(rows, d1), height=600, scrolling=True)
-
-
-
-
-
 
 
 
