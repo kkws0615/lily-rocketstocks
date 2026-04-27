@@ -359,7 +359,11 @@ def render_taiex_ta_chart():
 
                 visible_points = 150
                 x_min = df.index[-visible_points] if len(df) > visible_points else df.index[0]
-                fig.update_layout(margin=dict(l=10, r=40, t=10, b=10), height=300, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False, showlegend=False, xaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', range=[x_min, df.index[-1] + timedelta(days=5)], type="date"), yaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', side="right", tickformat=","), hovermode="x unified")
+                visible_df = df.iloc[-visible_points:]
+                y_min = float(visible_df['Low'].min())
+                y_max = float(visible_df['High'].max())
+                y_pad = (y_max - y_min) * 0.05
+                fig.update_layout(margin=dict(l=10, r=40, t=10, b=10), height=300, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False, showlegend=False, xaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', range=[x_min, df.index[-1] + timedelta(days=5)], type="date"), yaxis=dict(showgrid=True, gridcolor='rgba(200,200,200,0.2)', side="right", tickformat=",", range=[y_min - y_pad, y_max + y_pad]), hovermode="x unified")
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         except Exception as e:
             st.error(f"圖表載入失敗: {e}")
