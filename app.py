@@ -509,8 +509,9 @@ def render_table(rows, date_label):
             background: #1e2a3a; color: #f0f4f8;
             padding: 12px 16px; border-radius: 10px;
             font-size: 13px; line-height: 1.8;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-            min-width: 200px; pointer-events: none;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            min-width: 220px; pointer-events: none;
+            border: 1px solid #3a4f63;
         }}
         .tooltip-box table {{ background: transparent; width: 100%; font-size: 13px; }}
         .tooltip-box td {{ padding: 2px 6px; border: none; color: #f0f4f8; }}
@@ -520,9 +521,12 @@ def render_table(rows, date_label):
     </style>
     <div id="tt" class="tooltip-box"></div>
     <script>
-    (function(){{
+    function bindTooltips() {{
         var tt = document.getElementById("tt");
+        if (!tt) return;
         document.querySelectorAll(".has-tip").forEach(function(el) {{
+            if (el._tipBound) return;
+            el._tipBound = true;
             el.addEventListener("mouseenter", function(e) {{
                 tt.innerHTML = this.getAttribute("data-tip");
                 tt.style.display = "block";
@@ -539,7 +543,16 @@ def render_table(rows, date_label):
                 tt.style.display = "none";
             }});
         }});
-    }})();
+    }}
+    // 確保 DOM 完全載入後才綁定
+    if (document.readyState === "loading") {{
+        document.addEventListener("DOMContentLoaded", bindTooltips);
+    }} else {{
+        bindTooltips();
+    }}
+    // 額外保險：用 MutationObserver 偵測動態插入的元素
+    var observer = new MutationObserver(function() {{ bindTooltips(); }});
+    observer.observe(document.body, {{ childList: true, subtree: true }});
     </script>
     <p style="font-family:sans-serif; font-size:12px; color:#888; margin:4px 0 8px;">
         ⚠️ 以下評級與目標價為演算法估算，非投資建議，投資人應自行判斷。
@@ -633,13 +646,13 @@ d3 = (datetime.now() + timedelta(days=365)).strftime("%m/%d")
 
 with t1:
     rows = process_display(st.session_state.watch_list, "short")
-    components.html(render_table(rows, d1), height=600, scrolling=True)
+    components.html(render_table(rows, d1), height=800, scrolling=True)
 with t2:
     rows = process_display(st.session_state.watch_list, "medium")
-    components.html(render_table(rows, d2), height=600, scrolling=True)
+    components.html(render_table(rows, d2), height=800, scrolling=True)
 with t3:
     rows = process_display(st.session_state.watch_list, "long")
-    components.html(render_table(rows, d3), height=600, scrolling=True)
+    components.html(render_table(rows, d3), height=800, scrolling=True)
 
 with t4:
     if not current_user:
@@ -668,12 +681,7 @@ with t4:
                         st.rerun()
 
         rows = process_display(st.session_state.custom_list, "short")
-        components.html(render_table(rows, d1), height=600, scrolling=True)
-
-
-
-
-
+        components.html(render_table(rows, d1), height=800, scrolling=True)
 
 
 
