@@ -139,7 +139,7 @@ def delete_all_user_stocks(user_id: str):
 def render_user_login():
     with st.sidebar:
         st.markdown("### 👤 我的帳號")
-        st.caption("輸入暱稱來識別你的自選清單。每次 reload 重新輸入暱稱，自選股就會自動還原。")
+        st.caption("輸入暱稱來儲存你的自選清單。")
         uid = st.text_input(
             "暱稱",
             value=st.session_state.get("user_id", ""),
@@ -470,7 +470,7 @@ def render_table(rows, date_label):
 # --- 主介面佈局 ---
 # =====================================================================
 
-st.title("🚀 台股 AI 趨勢雷達")
+st.title("🚀台股 AI 趨勢雷達")
 
 # 側邊欄使用者登入（必須在所有其他 UI 之前呼叫）
 current_user = render_user_login()
@@ -508,7 +508,7 @@ with st.container():
 
     with col_btn:
         with st.container():
-            if st.button("🔄 刷新大盤熱門股", help="更新前三個 Tab 的百大熱門名單", use_container_width=True):
+            if st.button("🔄刷新大盤熱門股", help="更新前三個 Tab 的百大熱門名單", use_container_width=True):
                 fetch_dynamic_hot_stocks.clear()
                 new_hot = fetch_dynamic_hot_stocks()
                 if new_hot:
@@ -517,12 +517,12 @@ with st.container():
                     new_watch.update({c: n for c, n in new_hot})
                     new_watch.update(st.session_state.custom_list)
                     st.session_state.watch_list = new_watch
-                    st.success(f"✅ 已更新！共 {len(new_watch)} 支（0050 成分股 + 百大熱門股）")
+                    st.success(f"✅已更新！共 {len(new_watch)} 支（0050 成分股 + 百大熱門股）")
                 else:
                     base_system = {c: n for c, n in fetch_0050_constituents() + MEGA_STOCKS[50:]}
                     base_system.update(st.session_state.custom_list)
                     st.session_state.watch_list = base_system
-                    st.warning("⚠️ 網路阻擋，維持現有 0050 與保底清單。")
+                    st.warning("⚠️網路阻擋，維持現有 0050 與保底清單。")
                 st.rerun()
 
 # 分頁顯示
